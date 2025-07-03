@@ -10,9 +10,17 @@ const db = require('./db');
 const app = express();
 const PORT = process.env.PORT || 4000;
 const server = http.createServer(app);
-const io = new Server(server, { cors: { origin: '*' } });
 
-app.use(cors());
+const allowedOrigins = [
+  'http://localhost:8080',
+  'https://prism-meet.vercel.app'
+];
+
+app.use(cors({
+  origin: allowedOrigins,
+  credentials: true
+}));
+
 app.use(express.json());
 
 app.use(session({
@@ -64,6 +72,14 @@ app.use('/api/ai', aiNotesRoutes);
 app.use('/api/docs', meetingDocumentsRoutes);
 
 // Socket.io logic
+const io = new Server(server, {
+  cors: {
+    origin: allowedOrigins,
+    methods: ['GET', 'POST'],
+    credentials: true
+  }
+});
+
 io.on('connection', (socket) => {
   socket.on('join-meeting', ({ meetingId, user }) => {
     socket.join(meetingId);

@@ -74,9 +74,19 @@ const Meeting: React.FC = () => {
   const [structuredDoc, setStructuredDoc] = useState<string | null>(null);
   const [mom, setMom] = useState<string | null>(null);
   const [momLoading, setMomLoading] = useState(false);
+  const chatEndRef = useRef<HTMLDivElement>(null);
 
-  // Get user info from localStorage
-  const user = JSON.parse(localStorage.getItem('user') || '{}');
+  // Replace direct JSON.parse with safe parsing and type as any
+  let user: any = {};
+  try {
+    const userStr = localStorage.getItem('user');
+    user = userStr ? JSON.parse(userStr) : {};
+  } catch (e) {
+    user = {};
+  }
+
+  const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:4000';
+  const SOCKET_URL = API_URL.replace(/^http:/, 'https:');
 
   useEffect(() => {
     if (localVideoRef.current && localStream) {
@@ -197,7 +207,7 @@ const Meeting: React.FC = () => {
     if (!aiListening) return;
     const interval = setInterval(() => {
       if (aiNotes.trim()) {
-        fetch(`http://localhost:4000/api/ai/${meetingId}/notes`, {
+        fetch(`${API_URL}/api/ai/${meetingId}/notes`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ notes: aiNotes, speaker: user.name || 'Unknown' }),
@@ -220,7 +230,7 @@ const Meeting: React.FC = () => {
 
   // Fetch meetings on mount
   useEffect(() => {
-    fetch('http://localhost:4000/api/meetings', {
+    fetch(`${API_URL}/api/meetings`, {
       headers: { Authorization: `Bearer ${localStorage.getItem('token')}` },
     })
       .then(res => res.json())
@@ -239,7 +249,7 @@ const Meeting: React.FC = () => {
     if (!meetingIdParam) return;
     setMeetingLoading(true);
     setMeetingError(null);
-    fetch(`http://localhost:4000/api/meetings/${meetingIdParam}`, {
+    fetch(`${API_URL}/api/meetings/${meetingIdParam}`, {
       headers: { Authorization: `Bearer ${localStorage.getItem('token')}` },
     })
       .then(res => res.json())
@@ -261,7 +271,7 @@ const Meeting: React.FC = () => {
   // Handle form submit
   const handleSchedule = (e: React.FormEvent) => {
     e.preventDefault();
-    fetch('http://localhost:4000/api/meetings', {
+    fetch(`${API_URL}/api/meetings`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -286,7 +296,7 @@ const Meeting: React.FC = () => {
   };
 
   const generateInstantMeeting = () => {
-    fetch('http://localhost:4000/api/meetings/instant', {
+    fetch(`${API_URL}/api/meetings/instant`, {
       method: 'POST',
       headers: { Authorization: `Bearer ${localStorage.getItem('token')}` },
     })
@@ -304,7 +314,7 @@ const Meeting: React.FC = () => {
       return;
     }
     if (socketRef.current) return;
-    const socket = io('http://localhost:4000');
+    const socket = io(SOCKET_URL, { transports: ['websocket', 'polling'] });
     socketRef.current = socket;
     let initialMessages: any[] = [];
     console.log('Joining meeting:', { meetingId: meetingIdParam, user });
@@ -339,6 +349,13 @@ const Meeting: React.FC = () => {
     };
   }, [meetingIdParam, user]);
 
+  // Auto-scroll chat to latest message
+  useEffect(() => {
+    if (chatEndRef.current) {
+      chatEndRef.current.scrollIntoView({ behavior: 'smooth' });
+    }
+  }, [chatMessages]);
+
   // Chat send handler
   const sendChat = (e: React.FormEvent) => {
     e.preventDefault();
@@ -353,7 +370,7 @@ const Meeting: React.FC = () => {
     setIdeasLoading(true);
     setIdeasError(null);
     try {
-      const res = await fetch(`http://localhost:4000/api/docs/${meetingIdParam}/ideas`, {
+      const res = await fetch(`${API_URL}/api/docs/${meetingIdParam}/ideas`, {
         headers: { Authorization: `Bearer ${localStorage.getItem('token')}` },
       });
       const data = await res.json();
@@ -369,7 +386,7 @@ const Meeting: React.FC = () => {
   const postIdea = async () => {
     if (!ideaInput.trim()) return;
     try {
-      await fetch(`http://localhost:4000/api/docs/${meetingIdParam}/ideas`, {
+      await fetch(`${API_URL}/api/docs/${meetingIdParam}/ideas`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -389,7 +406,7 @@ const Meeting: React.FC = () => {
     setIdeasMode(true);
     setStructuredDoc(null);
     try {
-      const res = await fetch(`http://localhost:4000/api/docs/${meetingIdParam}/structure`, {
+      const res = await fetch(`${API_URL}/api/docs/${meetingIdParam}/structure`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${localStorage.getItem('token')}` },
       });
@@ -406,7 +423,7 @@ const Meeting: React.FC = () => {
     setMomLoading(true);
     setMom(null);
     try {
-      const res = await fetch(`http://localhost:4000/api/docs/${meetingIdParam}/minutes`, {
+      const res = await fetch(`${API_URL}/api/docs/${meetingIdParam}/minutes`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${localStorage.getItem('token')}` },
       });
@@ -700,6 +717,7 @@ const Meeting: React.FC = () => {
                     </div>
                   );
                 })}
+                <div ref={chatEndRef} />
               </div>
               <form onSubmit={sendChat} className="p-4 border-t border-slate-700 flex gap-2">
                 <input

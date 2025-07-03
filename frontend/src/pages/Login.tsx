@@ -8,25 +8,36 @@ const Login: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const navigate = useNavigate();
 
+  const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:4000';
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
     setError('');
     try {
-      const res = await fetch('http://localhost:4000/api/auth/login', {
+      const res = await fetch(`${API_URL}/api/auth/login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email, password }),
       });
+      if (!res.ok) {
+        const text = await res.text();
+        setError('Login failed: ' + (text || res.statusText));
+        setLoading(false);
+        return;
+      }
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Login failed');
-      localStorage.setItem('token', data.token);
-      navigate('/');
-    } catch (err: any) {
-      setError(err.message);
-    } finally {
-      setLoading(false);
+      if (data.token) {
+        localStorage.setItem('token', data.token);
+        localStorage.setItem('user', JSON.stringify(data.user));
+        navigate('/');
+      } else {
+        setError('Login failed: Invalid response from server');
+      }
+    } catch (err) {
+      setError('Login failed: ' + (err as Error).message);
     }
+    setLoading(false);
   };
 
   return (

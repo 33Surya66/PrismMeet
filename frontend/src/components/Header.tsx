@@ -7,8 +7,16 @@ const Header = () => {
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const navigate = useNavigate();
 
-  const user = JSON.parse(localStorage.getItem('user') || '{}');
+  let user: any = {};
+  try {
+    const userStr = localStorage.getItem('user');
+    user = userStr ? JSON.parse(userStr) : {};
+  } catch (e) {
+    user = {};
+  }
   const isLoggedIn = !!localStorage.getItem('token');
+
+  const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:4000';
 
   function getInitials(nameOrEmail) {
     if (!nameOrEmail) return '';
@@ -19,7 +27,7 @@ const Header = () => {
 
   const handleStartMeeting = async () => {
     const token = localStorage.getItem('token');
-    const res = await fetch('http://localhost:4000/api/meetings', {
+    const res = await fetch(`${API_URL}/api/meetings`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: token ? `Bearer ${token}` : '' },
     });
@@ -87,9 +95,20 @@ const Header = () => {
                 </button>
               </>
             ) : (
-              <Avatar>
-                <AvatarFallback>{getInitials(user.name || user.email)}</AvatarFallback>
-              </Avatar>
+              <>
+                <Avatar>
+                  <AvatarFallback>{getInitials(user.name || user.email)}</AvatarFallback>
+                </Avatar>
+                <button
+                  className="ml-2 px-4 py-2 bg-red-500 text-white rounded-lg font-semibold hover:bg-red-600 transition-colors"
+                  onClick={() => {
+                    localStorage.clear();
+                    window.location.href = '/';
+                  }}
+                >
+                  Logout
+                </button>
+              </>
             )}
           </div>
 
@@ -130,11 +149,22 @@ const Header = () => {
                 </button>
               </>
             ) : (
-              <div className="flex justify-center mt-2">
-                <Avatar>
-                  <AvatarFallback>{getInitials(user.name || user.email)}</AvatarFallback>
-                </Avatar>
-              </div>
+              <>
+                <div className="flex justify-center mt-2">
+                  <Avatar>
+                    <AvatarFallback>{getInitials(user.name || user.email)}</AvatarFallback>
+                  </Avatar>
+                </div>
+                <button
+                  className="w-full px-5 py-2 bg-red-500 text-white rounded-lg font-semibold hover:bg-red-600 transition-colors"
+                  onClick={() => {
+                    localStorage.clear();
+                    window.location.href = '/';
+                  }}
+                >
+                  Logout
+                </button>
+              </>
             )}
           </div>
         )}
