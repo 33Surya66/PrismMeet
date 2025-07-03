@@ -82,14 +82,8 @@ const Meeting: React.FC = () => {
     try {
       const userStr = localStorage.getItem('user');
       const parsed = userStr ? JSON.parse(userStr) : {};
-      if (!parsed.name && !parsed.email) {
-        // Force logout if user info is missing
-        localStorage.clear();
-        return {};
-      }
       return parsed;
     } catch {
-      localStorage.clear();
       return {};
     }
   }, []);
@@ -471,6 +465,7 @@ const Meeting: React.FC = () => {
           e.preventDefault();
           if (joinId) {
             const token = localStorage.getItem('token');
+            console.log('Attempting to join meeting with ID:', joinId);
             const res = await fetch(`${API_URL}/api/meetings/${joinId}/join`, {
               method: 'POST',
               headers: {
@@ -478,7 +473,9 @@ const Meeting: React.FC = () => {
                 'Content-Type': 'application/json'
               }
             });
+            console.log('Join response status:', res.status);
             if (res.ok) {
+              console.log('Navigating to', `/meeting/${joinId}`);
               navigate(`/meeting/${joinId}`);
             } else {
               alert('You must be logged in to join a meeting.');
