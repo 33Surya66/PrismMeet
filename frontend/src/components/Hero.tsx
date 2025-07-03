@@ -1,6 +1,8 @@
 import { Play, Users, Shield, Zap, ArrowRight, Video } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
 
 const Hero = () => {
+  const navigate = useNavigate();
   return (
     <section className="pt-32 pb-20 px-4 sm:px-6 lg:px-8">
       <div className="max-w-7xl mx-auto">
@@ -26,7 +28,10 @@ const Hero = () => {
           </p>
           
           <div className="flex flex-col sm:flex-row gap-6 justify-center items-center mb-16">
-            <button className="group px-8 py-4 bg-gradient-to-r from-blue-600 to-blue-800 text-white rounded-xl font-semibold text-lg hover:from-blue-700 hover:to-blue-900 transition-all duration-300 transform hover:scale-105 shadow-2xl hover:shadow-blue-500/50 flex items-center">
+            <button
+              className="group px-8 py-4 bg-gradient-to-r from-blue-600 to-blue-800 text-white rounded-xl font-semibold text-lg hover:from-blue-700 hover:to-blue-900 transition-all duration-300 transform hover:scale-105 shadow-2xl hover:shadow-blue-500/50 flex items-center"
+              onClick={() => navigate('/meeting')}
+            >
               <Play className="w-6 h-6 mr-3 group-hover:scale-110 transition-transform" />
               Start Free Meeting
               <ArrowRight className="w-5 h-5 ml-2 group-hover:translate-x-1 transition-transform" />

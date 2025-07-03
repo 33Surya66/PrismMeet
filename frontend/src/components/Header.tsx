@@ -1,8 +1,23 @@
 import { useState } from 'react';
 import { Menu, X, Video, Users, Shield, Zap } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
 
 const Header = () => {
   const [isMenuOpen, setIsMenuOpen] = useState(false);
+  const navigate = useNavigate();
+
+  const handleStartMeeting = async () => {
+    const token = localStorage.getItem('token');
+    const res = await fetch('http://localhost:4000/api/meetings', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: token ? `Bearer ${token}` : '' },
+    });
+    const data = await res.json();
+    if (data.id) {
+      navigate(`/meeting/${data.id}`);
+      // Optionally show/copy link
+    }
+  };
 
   return (
     <header className="fixed top-0 left-0 right-0 z-50 backdrop-blur-lg bg-black/20 border-b border-blue-500/30">
@@ -37,10 +52,25 @@ const Header = () => {
             </a>
           </nav>
 
-          {/* CTA Button */}
+          {/* CTA Buttons */}
           <div className="hidden md:flex items-center space-x-4">
-            <button className="px-6 py-3 bg-gradient-to-r from-blue-600 to-blue-800 text-white rounded-lg font-semibold hover:from-blue-700 hover:to-blue-900 transition-all duration-200 transform hover:scale-105 shadow-lg hover:shadow-blue-500/25">
+            <button
+              className="px-6 py-3 bg-gradient-to-r from-blue-600 to-blue-800 text-white rounded-lg font-semibold hover:from-blue-700 hover:to-blue-900 transition-all duration-200 transform hover:scale-105 shadow-lg hover:shadow-blue-500/25"
+              onClick={handleStartMeeting}
+            >
               Start Meeting
+            </button>
+            <button
+              className="px-5 py-2 bg-slate-700 text-white rounded-lg font-semibold hover:bg-slate-600 transition-colors"
+              onClick={() => navigate('/login')}
+            >
+              Login
+            </button>
+            <button
+              className="px-5 py-2 bg-blue-500 text-white rounded-lg font-semibold hover:bg-blue-600 transition-colors"
+              onClick={() => navigate('/register')}
+            >
+              Signup
             </button>
           </div>
 
@@ -68,8 +98,14 @@ const Header = () => {
             <a href="#analytics" className="block text-gray-300 hover:text-white transition-colors">
               Analytics
             </a>
-            <button className="w-full mt-4 px-6 py-3 bg-gradient-to-r from-blue-600 to-blue-800 text-white rounded-lg font-semibold">
+            <button className="w-full mt-4 px-6 py-3 bg-gradient-to-r from-blue-600 to-blue-800 text-white rounded-lg font-semibold" onClick={handleStartMeeting}>
               Start Meeting
+            </button>
+            <button className="w-full px-5 py-2 bg-slate-700 text-white rounded-lg font-semibold hover:bg-slate-600 transition-colors" onClick={() => navigate('/login')}>
+              Login
+            </button>
+            <button className="w-full px-5 py-2 bg-blue-500 text-white rounded-lg font-semibold hover:bg-blue-600 transition-colors" onClick={() => navigate('/register')}>
+              Signup
             </button>
           </div>
         )}
