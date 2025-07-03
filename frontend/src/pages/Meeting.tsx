@@ -467,7 +467,24 @@ const Meeting: React.FC = () => {
   if (showJoinModal) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-slate-900 via-blue-900 to-black">
-        <form onSubmit={e => { e.preventDefault(); if (joinId) { window.location.href = `/meeting/${joinId}`; } }} className="bg-slate-800 p-8 rounded-2xl shadow-xl w-full max-w-md flex flex-col items-center">
+        <form onSubmit={async e => {
+          e.preventDefault();
+          if (joinId) {
+            const token = localStorage.getItem('token');
+            const res = await fetch(`${API_URL}/api/meetings/${joinId}/join`, {
+              method: 'POST',
+              headers: {
+                Authorization: token ? `Bearer ${token}` : '',
+                'Content-Type': 'application/json'
+              }
+            });
+            if (res.ok) {
+              window.location.href = `/meeting/${joinId}`;
+            } else {
+              alert('You must be logged in to join a meeting.');
+            }
+          }
+        }} className="bg-slate-800 p-8 rounded-2xl shadow-xl w-full max-w-md flex flex-col items-center">
           <h2 className="text-xl font-bold text-white mb-4">Join a Meeting</h2>
           <input type="text" required placeholder="Enter Meeting ID" value={joinId} onChange={e => setJoinId(e.target.value)} className="w-full mb-4 p-2 rounded" />
           <button type="submit" className="px-6 py-2 bg-blue-500 text-white rounded-lg mb-2">Join</button>
@@ -708,7 +725,21 @@ const Meeting: React.FC = () => {
                       <div className="text-xs text-slate-400 mt-2">Meeting ID: <span className="font-mono">{m.id}</span></div>
                       <button
                         className="mt-2 px-4 py-1 bg-blue-500 text-white rounded-lg"
-                        onClick={() => window.location.href = `/meeting/${m.id}`}
+                        onClick={async () => {
+                          const token = localStorage.getItem('token');
+                          const res = await fetch(`${API_URL}/api/meetings/${m.id}/join`, {
+                            method: 'POST',
+                            headers: {
+                              Authorization: token ? `Bearer ${token}` : '',
+                              'Content-Type': 'application/json'
+                            }
+                          });
+                          if (res.ok) {
+                            window.location.href = `/meeting/${m.id}`;
+                          } else {
+                            alert('You must be logged in to join a meeting.');
+                          }
+                        }}
                       >Join</button>
                     </li>
                   ))}
@@ -990,7 +1021,21 @@ const Meeting: React.FC = () => {
                 <div className="text-xs text-slate-400 mt-2">Meeting ID: <span className="font-mono">{m.id}</span></div>
                 <button
                   className="mt-2 px-4 py-1 bg-blue-500 text-white rounded-lg"
-                  onClick={() => window.location.href = `/meeting/${m.id}`}
+                  onClick={async () => {
+                    const token = localStorage.getItem('token');
+                    const res = await fetch(`${API_URL}/api/meetings/${m.id}/join`, {
+                      method: 'POST',
+                      headers: {
+                        Authorization: token ? `Bearer ${token}` : '',
+                        'Content-Type': 'application/json'
+                      }
+                    });
+                    if (res.ok) {
+                      window.location.href = `/meeting/${m.id}`;
+                    } else {
+                      alert('You must be logged in to join a meeting.');
+                    }
+                  }}
                 >Join</button>
               </li>
             ))}
