@@ -1,10 +1,21 @@
 import { useState } from 'react';
 import { Menu, X, Video, Users, Shield, Zap } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
+import { Avatar, AvatarFallback } from './ui/avatar';
 
 const Header = () => {
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const navigate = useNavigate();
+
+  const user = JSON.parse(localStorage.getItem('user') || '{}');
+  const isLoggedIn = !!localStorage.getItem('token');
+
+  function getInitials(nameOrEmail) {
+    if (!nameOrEmail) return '';
+    const parts = nameOrEmail.split(/\s+|@/);
+    if (parts.length === 1) return parts[0][0]?.toUpperCase() || '';
+    return (parts[0][0] + (parts[1][0] || '')).toUpperCase();
+  }
 
   const handleStartMeeting = async () => {
     const token = localStorage.getItem('token');
@@ -60,18 +71,26 @@ const Header = () => {
             >
               Start Meeting
             </button>
-            <button
-              className="px-5 py-2 bg-slate-700 text-white rounded-lg font-semibold hover:bg-slate-600 transition-colors"
-              onClick={() => navigate('/login')}
-            >
-              Login
-            </button>
-            <button
-              className="px-5 py-2 bg-blue-500 text-white rounded-lg font-semibold hover:bg-blue-600 transition-colors"
-              onClick={() => navigate('/register')}
-            >
-              Signup
-            </button>
+            {!isLoggedIn ? (
+              <>
+                <button
+                  className="px-5 py-2 bg-slate-700 text-white rounded-lg font-semibold hover:bg-slate-600 transition-colors"
+                  onClick={() => navigate('/login')}
+                >
+                  Login
+                </button>
+                <button
+                  className="px-5 py-2 bg-blue-500 text-white rounded-lg font-semibold hover:bg-blue-600 transition-colors"
+                  onClick={() => navigate('/register')}
+                >
+                  Signup
+                </button>
+              </>
+            ) : (
+              <Avatar>
+                <AvatarFallback>{getInitials(user.name || user.email)}</AvatarFallback>
+              </Avatar>
+            )}
           </div>
 
           {/* Mobile Menu Button */}
@@ -101,12 +120,22 @@ const Header = () => {
             <button className="w-full mt-4 px-6 py-3 bg-gradient-to-r from-blue-600 to-blue-800 text-white rounded-lg font-semibold" onClick={handleStartMeeting}>
               Start Meeting
             </button>
-            <button className="w-full px-5 py-2 bg-slate-700 text-white rounded-lg font-semibold hover:bg-slate-600 transition-colors" onClick={() => navigate('/login')}>
-              Login
-            </button>
-            <button className="w-full px-5 py-2 bg-blue-500 text-white rounded-lg font-semibold hover:bg-blue-600 transition-colors" onClick={() => navigate('/register')}>
-              Signup
-            </button>
+            {!isLoggedIn ? (
+              <>
+                <button className="w-full px-5 py-2 bg-slate-700 text-white rounded-lg font-semibold hover:bg-slate-600 transition-colors" onClick={() => navigate('/login')}>
+                  Login
+                </button>
+                <button className="w-full px-5 py-2 bg-blue-500 text-white rounded-lg font-semibold hover:bg-blue-600 transition-colors" onClick={() => navigate('/register')}>
+                  Signup
+                </button>
+              </>
+            ) : (
+              <div className="flex justify-center mt-2">
+                <Avatar>
+                  <AvatarFallback>{getInitials(user.name || user.email)}</AvatarFallback>
+                </Avatar>
+              </div>
+            )}
           </div>
         )}
       </div>

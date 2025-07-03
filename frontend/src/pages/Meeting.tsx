@@ -406,7 +406,8 @@ const Meeting: React.FC = () => {
     setMomLoading(true);
     setMom(null);
     try {
-      const res = await fetch(`http://localhost:4000/api/docs/${meetingIdParam}/document`, {
+      const res = await fetch(`http://localhost:4000/api/docs/${meetingIdParam}/minutes`, {
+        method: 'POST',
         headers: { Authorization: `Bearer ${localStorage.getItem('token')}` },
       });
       const data = await res.json();
