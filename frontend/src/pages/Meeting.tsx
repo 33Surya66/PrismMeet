@@ -479,7 +479,7 @@ const Meeting: React.FC = () => {
               }
             });
             if (res.ok) {
-              window.location.href = `/meeting/${joinId}`;
+              navigate(`/meeting/${joinId}`);
             } else {
               alert('You must be logged in to join a meeting.');
             }
@@ -521,10 +521,10 @@ const Meeting: React.FC = () => {
               <button
                 className="px-4 py-2 bg-blue-500 text-white rounded-lg mb-2"
                 onClick={() => {
-                  navigator.clipboard.writeText(`${window.location.origin}/meeting/${scheduledMeetingId}`);
+                  navigate(`/meeting/${scheduledMeetingId}`);
                 }}
               >Copy Meeting Link</button>
-              <button className="px-4 py-2 bg-green-600 text-white rounded-lg mb-2" onClick={() => window.location.href = `/meeting/${scheduledMeetingId}`}>Join Meeting</button>
+              <button className="px-4 py-2 bg-green-600 text-white rounded-lg mb-2" onClick={() => navigate(`/meeting/${scheduledMeetingId}`)}>Join Meeting</button>
               <button className="px-4 py-2 bg-slate-600 text-white rounded-lg" onClick={() => setScheduledMeetingId(null)}>Close</button>
             </div>
           </div>
@@ -703,10 +703,10 @@ const Meeting: React.FC = () => {
                     <button
                       className="px-4 py-2 bg-blue-500 text-white rounded-lg mb-2"
                       onClick={() => {
-                        navigator.clipboard.writeText(`${window.location.origin}/meeting/${scheduledMeetingId}`);
+                        navigate(`/meeting/${scheduledMeetingId}`);
                       }}
                     >Copy Meeting Link</button>
-                    <button className="px-4 py-2 bg-green-600 text-white rounded-lg mb-2" onClick={() => window.location.href = `/meeting/${scheduledMeetingId}`}>Join Meeting</button>
+                    <button className="px-4 py-2 bg-green-600 text-white rounded-lg mb-2" onClick={() => navigate(`/meeting/${scheduledMeetingId}`)}>Join Meeting</button>
                     <button className="px-4 py-2 bg-slate-600 text-white rounded-lg" onClick={() => setScheduledMeetingId(null)}>Close</button>
                   </div>
                 </div>
@@ -735,7 +735,7 @@ const Meeting: React.FC = () => {
                             }
                           });
                           if (res.ok) {
-                            window.location.href = `/meeting/${m.id}`;
+                            navigate(`/meeting/${m.id}`);
                           } else {
                             alert('You must be logged in to join a meeting.');
                           }
@@ -999,10 +999,10 @@ const Meeting: React.FC = () => {
               <button
                 className="px-4 py-2 bg-blue-500 text-white rounded-lg mb-2"
                 onClick={() => {
-                  navigator.clipboard.writeText(`${window.location.origin}/meeting/${scheduledMeetingId}`);
+                  navigate(`/meeting/${scheduledMeetingId}`);
                 }}
               >Copy Meeting Link</button>
-              <button className="px-4 py-2 bg-green-600 text-white rounded-lg mb-2" onClick={() => window.location.href = `/meeting/${scheduledMeetingId}`}>Join Meeting</button>
+              <button className="px-4 py-2 bg-green-600 text-white rounded-lg mb-2" onClick={() => navigate(`/meeting/${scheduledMeetingId}`)}>Join Meeting</button>
               <button className="px-4 py-2 bg-slate-600 text-white rounded-lg" onClick={() => setScheduledMeetingId(null)}>Close</button>
             </div>
           </div>
@@ -1031,7 +1031,7 @@ const Meeting: React.FC = () => {
                       }
                     });
                     if (res.ok) {
-                      window.location.href = `/meeting/${m.id}`;
+                      navigate(`/meeting/${m.id}`);
                     } else {
                       alert('You must be logged in to join a meeting.');
                     }
