@@ -141,17 +141,28 @@ router.post('/:id/ai-log', (req, res) => {
   });
 });
 
-// Instant meeting link generation
-router.post('/instant', auth, (req, res) => {
+// Instant meeting link generation (allow guests)
+router.post('/instant', (req, res) => {
+  let host_id = null;
+  if (req.headers.authorization) {
+    try {
+      const token = req.headers.authorization.split(' ')[1];
+      req.user = jwt.verify(token, JWT_SECRET);
+      host_id = req.user.id;
+    } catch {
+      // Invalid token, treat as guest
+    }
+  }
   const id = uuidv4();
-  const host_id = req.user.id;
   const now = new Date().toISOString();
   db.run(
     'INSERT INTO meetings (id, host_id, title, description, start_time, end_time, location, calendar_event_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
     [id, host_id, 'Instant Meeting', '', now, now, '', null],
     function (err) {
       if (err) return res.status(500).json({ error: 'Could not create instant meeting' });
-      db.run('INSERT INTO meeting_participants (meeting_id, user_id) VALUES (?, ?)', [id, host_id]);
+      if (host_id) {
+        db.run('INSERT INTO meeting_participants (meeting_id, user_id) VALUES (?, ?)', [id, host_id]);
+      }
       db.get('SELECT * FROM meetings WHERE id = ?', [id], (err, meeting) => {
         if (err || !meeting) return res.status(500).json({ error: 'Could not fetch created meeting' });
         res.json(meeting);

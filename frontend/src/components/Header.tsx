@@ -26,15 +26,19 @@ const Header = () => {
   }
 
   const handleStartMeeting = async () => {
+    if (!user.name && !user.email) {
+      alert('You must be logged in to start a meeting.');
+      return;
+    }
+    // User is logged in, create the meeting
     const token = localStorage.getItem('token');
-    const res = await fetch(`${API_URL}/api/meetings`, {
+    const res = await fetch(`${API_URL}/api/meetings/instant`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: token ? `Bearer ${token}` : '' },
+      headers: { Authorization: token ? `Bearer ${token}` : '' },
     });
     const data = await res.json();
     if (data.id) {
       navigate(`/meeting/${data.id}`);
-      // Optionally show/copy link
     }
   };
 

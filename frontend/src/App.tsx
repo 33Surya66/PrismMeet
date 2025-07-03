@@ -9,6 +9,7 @@ import Meeting from "./pages/Meeting";
 import Login from "./pages/Login";
 import Register from "./pages/Register";
 import React from "react";
+import Header from "./components/Header";
 
 const queryClient = new QueryClient();
 
@@ -18,6 +19,7 @@ const App = () => (
       <Toaster />
       <Sonner />
       <BrowserRouter>
+        <Header />
         <Routes>
           <Route path="/" element={<Index />} />
           <Route path="/meeting/:id" element={<Meeting />} />

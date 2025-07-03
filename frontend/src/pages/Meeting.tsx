@@ -1,6 +1,6 @@
-import React, { useRef, useState, useEffect } from "react";
+import React, { useRef, useState, useEffect, useMemo } from "react";
 import { LogOut, XCircle, Settings, Mic, MicOff, Video as VideoIcon, VideoOff, Monitor, Languages } from 'lucide-react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useNavigate, useParams, useLocation } from 'react-router-dom';
 import { Calendar } from "@/components/ui/calendar";
 import { io } from 'socket.io-client';
 
@@ -44,6 +44,7 @@ const Meeting: React.FC = () => {
   const [showEndConfirm, setShowEndConfirm] = useState(false);
   const isHost = true; // TODO: Replace with real host check
   const navigate = useNavigate();
+  const location = useLocation();
   const [showScheduleForm, setShowScheduleForm] = useState(false);
   const [meetings, setMeetings] = useState([]);
   const [form, setForm] = useState({
@@ -76,14 +77,22 @@ const Meeting: React.FC = () => {
   const [momLoading, setMomLoading] = useState(false);
   const chatEndRef = useRef<HTMLDivElement>(null);
 
-  // Replace direct JSON.parse with safe parsing and type as any
-  let user: any = {};
-  try {
-    const userStr = localStorage.getItem('user');
-    user = userStr ? JSON.parse(userStr) : {};
-  } catch (e) {
-    user = {};
-  }
+  // Memoize user object so it is stable across renders
+  const user: any = useMemo(() => {
+    try {
+      const userStr = localStorage.getItem('user');
+      const parsed = userStr ? JSON.parse(userStr) : {};
+      if (!parsed.name && !parsed.email) {
+        // Force logout if user info is missing
+        localStorage.clear();
+        return {};
+      }
+      return parsed;
+    } catch {
+      localStorage.clear();
+      return {};
+    }
+  }, []);
 
   const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:4000';
   const SOCKET_URL = API_URL.replace(/^http:/, 'https:');
@@ -252,12 +261,17 @@ const Meeting: React.FC = () => {
     fetch(`${API_URL}/api/meetings/${meetingIdParam}`, {
       headers: { Authorization: `Bearer ${localStorage.getItem('token')}` },
     })
-      .then(res => res.json())
-      .then(data => {
-        if (data.error) {
-          setMeetingError(data.error);
+      .then(res => {
+        if (res.status === 401) {
+          setMeetingError('You must be logged in to view full meeting details.');
           setMeetingDetails(null);
-        } else {
+          setMeetingLoading(false);
+          return null;
+        }
+        return res.json();
+      })
+      .then(data => {
+        if (data) {
           setMeetingDetails(data);
         }
         setMeetingLoading(false);
@@ -266,7 +280,7 @@ const Meeting: React.FC = () => {
         setMeetingError('Failed to load meeting');
         setMeetingLoading(false);
       });
-  }, [meetingIdParam]);
+  }, [meetingIdParam, API_URL]);
 
   // Handle form submit
   const handleSchedule = (e: React.FormEvent) => {
@@ -318,6 +332,12 @@ const Meeting: React.FC = () => {
     socketRef.current = socket;
     let initialMessages: any[] = [];
     console.log('Joining meeting:', { meetingId: meetingIdParam, user });
+    socket.on('connect', () => {
+      console.log('Socket connected:', socket.id);
+    });
+    socket.on('disconnect', () => {
+      console.log('Socket disconnected');
+    });
     socket.emit('join-meeting', { meetingId: meetingIdParam, user });
 
     const handleMessage = (msg: any) => {
@@ -325,7 +345,7 @@ const Meeting: React.FC = () => {
       if (!historyLoaded && msg.timestamp) {
         initialMessages.push(msg);
       } else {
-        setChatMessages((prev) => [...prev, msg]);
+        setChatMessages((prev) => Array.isArray(prev) ? [...prev, msg] : [msg]);
       }
     };
 
@@ -347,7 +367,7 @@ const Meeting: React.FC = () => {
       socketRef.current = null;
       setHistoryLoaded(false);
     };
-  }, [meetingIdParam, user]);
+  }, [meetingIdParam]); // Remove user from dependencies
 
   // Auto-scroll chat to latest message
   useEffect(() => {
@@ -359,9 +379,17 @@ const Meeting: React.FC = () => {
   // Chat send handler
   const sendChat = (e: React.FormEvent) => {
     e.preventDefault();
+    if (!localStorage.getItem('token')) {
+      alert('You must be logged in to send a message.');
+      return;
+    }
     if (!chatInput.trim() || !socketRef.current) return;
     console.log('Sending chat-message:', { meetingId: meetingIdParam, user, text: chatInput });
-    socketRef.current.emit('chat-message', { meetingId: meetingIdParam, user, text: chatInput });
+    socketRef.current.emit('chat-message', {
+      meetingId: meetingIdParam,
+      user: { name: user.name || user.email || 'Anonymous', email: user.email || '' },
+      text: chatInput
+    });
     setChatInput('');
   };
 
@@ -704,19 +732,21 @@ const Meeting: React.FC = () => {
             <div className="bg-slate-800 rounded-2xl shadow-xl flex flex-col mb-4">
               <div className="p-4 border-b border-slate-700 text-white font-bold text-lg">Chat</div>
               <div className="flex-1 overflow-y-auto p-4 space-y-2" style={{ maxHeight: '40vh' }}>
-                {chatMessages.map((msg, i) => {
-                  const isMe = msg.user === (user.name || user.email);
-                  return (
-                    <div key={i} className={`flex ${isMe ? 'justify-end' : 'justify-start'}`}>
-                      <div className={`max-w-[70%] px-4 py-2 rounded-lg ${isMe ? 'bg-blue-500 text-white self-end' : 'bg-slate-700 text-white self-start'}`}>
-                        {!isMe && (
+                {Array.isArray(chatMessages) && chatMessages.length > 0 ? (
+                  chatMessages.map((msg, i) => {
+                    const isMe = msg.user === (user.name || user.email);
+                    return (
+                      <div key={i} className={`flex ${isMe ? 'justify-end' : 'justify-start'}`}>
+                        <div className={`max-w-[70%] px-4 py-2 rounded-lg ${isMe ? 'bg-blue-500 text-white self-end' : 'bg-slate-700 text-white self-start'}`}>
                           <div className="text-xs font-semibold text-blue-300 mb-1">{msg.user}</div>
-                        )}
-                        <div>{msg.text}</div>
+                          <div>{msg.text}</div>
+                        </div>
                       </div>
-                    </div>
-                  );
-                })}
+                    );
+                  })
+                ) : (
+                  <div className="text-slate-400 text-center">No messages yet. Start the conversation!</div>
+                )}
                 <div ref={chatEndRef} />
               </div>
               <form onSubmit={sendChat} className="p-4 border-t border-slate-700 flex gap-2">
