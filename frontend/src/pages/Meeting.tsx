@@ -3,6 +3,7 @@ import { LogOut, XCircle, Settings, Mic, MicOff, Video as VideoIcon, VideoOff, M
 import { useNavigate, useParams, useLocation } from 'react-router-dom';
 import { Calendar } from "@/components/ui/calendar";
 import { io } from 'socket.io-client';
+import { useUser } from '@/context/UserContext';
 
 // Heroicons (MIT) SVGs for mic, cam, screen, etc.
 const Icon = {
@@ -79,16 +80,7 @@ const Meeting: React.FC = () => {
   const peersRef = useRef<{ [socketId: string]: RTCPeerConnection }>({});
   const [remoteScreenShares, setRemoteScreenShares] = useState<{ [socketId: string]: { stream: MediaStream, user: any } }>({});
 
-  // Memoize user object so it is stable across renders
-  const user: any = useMemo(() => {
-    try {
-      const userStr = localStorage.getItem('user');
-      const parsed = userStr ? JSON.parse(userStr) : {};
-      return parsed;
-    } catch {
-      return {};
-    }
-  }, []);
+  const user = useUser();
 
   const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:4000';
   const SOCKET_URL = API_URL.replace(/^http:/, 'https:');

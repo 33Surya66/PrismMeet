@@ -83,6 +83,8 @@ const io = new Server(server, {
 io.on('connection', (socket) => {
   socket.on('join-meeting', ({ meetingId, user }) => {
     socket.join(meetingId);
+    socket.data.user = user;
+    socket.data.meetingId = meetingId;
     // Send all previous chat messages to the user
     db.all('SELECT user, text, timestamp FROM chat_messages WHERE meeting_id = ? ORDER BY timestamp ASC', [meetingId], (err, rows) => {
       if (!err && rows) {
@@ -93,17 +95,17 @@ io.on('connection', (socket) => {
     });
     io.to(meetingId).emit('participant-list', Array.from(io.sockets.adapter.rooms.get(meetingId) || []));
     socket.to(meetingId).emit('chat-message', { user: 'System', text: `${user.name || user.email || 'A user'} joined the meeting.`, timestamp: new Date().toISOString() });
-    socket.data.user = user;
-    socket.data.meetingId = meetingId;
     // Notify others of new participant for WebRTC
     socket.to(meetingId).emit('new-participant', { socketId: socket.id, user });
   });
-  socket.on('chat-message', ({ meetingId, user, text }) => {
+  socket.on('chat-message', ({ meetingId, text }) => {
+    const user = socket.data.user || { name: 'Anonymous', email: '' };
     const timestamp = new Date().toISOString();
     db.run('INSERT INTO chat_messages (meeting_id, user, text, timestamp) VALUES (?, ?, ?, ?)', [meetingId, user.name || user.email || 'Anonymous', text, timestamp]);
     io.to(meetingId).emit('chat-message', { user: user.name || user.email || 'Anonymous', text, timestamp });
   });
-  socket.on('raise-hand', ({ meetingId, user }) => {
+  socket.on('raise-hand', ({ meetingId }) => {
+    const user = socket.data.user || { name: 'Anonymous', email: '' };
     io.to(meetingId).emit('hand-raised', { user: user.name || user.email || 'Anonymous' });
   });
   // WebRTC signaling relay
@@ -113,9 +115,10 @@ io.on('connection', (socket) => {
   });
   socket.on('disconnect', () => {
     const meetingId = socket.data.meetingId;
+    const user = socket.data.user || { name: 'Anonymous', email: '' };
     if (meetingId) {
       io.to(meetingId).emit('participant-list', Array.from(io.sockets.adapter.rooms.get(meetingId) || []));
-      io.to(meetingId).emit('chat-message', { user: 'System', text: `${socket.data.user?.name || socket.data.user?.email || 'A user'} left the meeting.`, timestamp: new Date().toISOString() });
+      io.to(meetingId).emit('chat-message', { user: 'System', text: `${user.name || user.email || 'A user'} left the meeting.`, timestamp: new Date().toISOString() });
       // Notify others that this participant left (for WebRTC cleanup)
       socket.to(meetingId).emit('participant-left', { socketId: socket.id });
     }
