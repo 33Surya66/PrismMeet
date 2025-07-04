@@ -28,8 +28,11 @@ const Register: React.FC = () => {
       }
       const data = await res.json();
       if (data.token) {
+        let userObj = data.user || {};
+        if (!userObj.name && userObj.email) userObj.name = userObj.email;
         localStorage.setItem('token', data.token);
-        localStorage.setItem('user', JSON.stringify(data.user));
+        localStorage.setItem('user', JSON.stringify(userObj));
+        console.log('Saved user to localStorage:', userObj);
         navigate('/');
       } else {
         setError('Signup failed: Invalid response from server');
