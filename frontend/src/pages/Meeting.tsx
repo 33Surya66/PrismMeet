@@ -91,6 +91,57 @@ const Meeting: React.FC = () => {
     { urls: 'turn:openrelay.metered.ca:80', username: 'openrelayproject', credential: 'openrelayproject' }
   ];
 
+  const generateInstantMeeting = () => {
+    fetch(`${API_URL}/api/meetings/instant`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${localStorage.getItem('token')}`,
+        'Content-Type': 'application/json',
+      },
+    })
+      .then(res => res.json())
+      .then(data => {
+        if (data && data.id) {
+          navigate(`/meeting/${data.id}`);
+        } else {
+          alert('Failed to generate meeting link.');
+        }
+      })
+      .catch(() => alert('Failed to generate meeting link.'));
+  };
+
+  // Always show join/generate/schedule UI at the top
+  const joinGenerateUI = (
+    <div className="w-full flex flex-col items-center mb-8">
+      <form onSubmit={async e => {
+        e.preventDefault();
+        if (joinId) {
+          const token = localStorage.getItem('token');
+          const res = await fetch(`${API_URL}/api/meetings/${joinId}/join`, {
+            method: 'POST',
+            headers: {
+              Authorization: token ? `Bearer ${token}` : '',
+              'Content-Type': 'application/json'
+            }
+          });
+          if (res.ok) {
+            navigate(`/meeting/${joinId}`);
+          } else {
+            alert('You must be logged in to join a meeting.');
+          }
+        }
+      }} className="bg-slate-800 p-4 rounded-xl shadow w-full max-w-md flex flex-col items-center mb-4">
+        <h2 className="text-lg font-bold text-white mb-2">Join a Meeting</h2>
+        <input type="text" required placeholder="Enter Meeting ID" value={joinId} onChange={e => setJoinId(e.target.value)} className="w-full mb-2 p-2 rounded" />
+        <button type="submit" className="px-4 py-2 bg-blue-500 text-white rounded-lg mb-2">Join</button>
+        <div className="text-slate-400 my-2">or</div>
+        <button type="button" className="px-4 py-2 bg-green-500 text-white rounded-lg mb-2" onClick={() => setShowScheduleForm(true)}>Schedule a Meeting</button>
+        <button type="button" className="px-4 py-2 bg-amber-500 text-white rounded-lg mb-2" onClick={() => setShowScheduleForm(true)}>Generate Meeting Link (Scheduled)</button>
+        <button type="button" className="px-4 py-2 bg-purple-500 text-white rounded-lg" onClick={generateInstantMeeting}>Generate Instant Meeting Link</button>
+      </form>
+    </div>
+  );
+
   // Defensive check: if no meetingIdParam, show message and return early
   if (!meetingIdParam) {
     return (
@@ -318,18 +369,6 @@ const Meeting: React.FC = () => {
         setShowScheduleForm(false);
         setForm({ title: '', description: '', start: undefined, end: undefined, location: '', participants: '' });
         setScheduledMeetingId(meeting.id);
-      });
-  };
-
-  const generateInstantMeeting = () => {
-    fetch(`${API_URL}/api/meetings/instant`, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${localStorage.getItem('token')}` },
-    })
-      .then(res => res.json())
-      .then(meeting => {
-        setScheduledMeetingId(meeting.id);
-        setShowScheduleForm(false);
       });
   };
 
@@ -626,35 +665,7 @@ const Meeting: React.FC = () => {
   if (showJoinModal) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-slate-900 via-blue-900 to-black">
-        <form onSubmit={async e => {
-          e.preventDefault();
-          if (joinId) {
-            const token = localStorage.getItem('token');
-            console.log('Attempting to join meeting with ID:', joinId);
-            const res = await fetch(`${API_URL}/api/meetings/${joinId}/join`, {
-              method: 'POST',
-              headers: {
-                Authorization: token ? `Bearer ${token}` : '',
-                'Content-Type': 'application/json'
-              }
-            });
-            console.log('Join response status:', res.status);
-            if (res.ok) {
-              console.log('Navigating to', `/meeting/${joinId}`);
-              navigate(`/meeting/${joinId}`);
-            } else {
-              alert('You must be logged in to join a meeting.');
-            }
-          }
-        }} className="bg-slate-800 p-8 rounded-2xl shadow-xl w-full max-w-md flex flex-col items-center">
-          <h2 className="text-xl font-bold text-white mb-4">Join a Meeting</h2>
-          <input type="text" required placeholder="Enter Meeting ID" value={joinId} onChange={e => setJoinId(e.target.value)} className="w-full mb-4 p-2 rounded" />
-          <button type="submit" className="px-6 py-2 bg-blue-500 text-white rounded-lg mb-2">Join</button>
-          <div className="text-slate-400 my-2">or</div>
-          <button type="button" className="px-6 py-2 bg-green-500 text-white rounded-lg mb-2" onClick={() => setShowScheduleForm(true)}>Schedule a Meeting</button>
-          <button type="button" className="px-6 py-2 bg-amber-500 text-white rounded-lg mb-2" onClick={() => setShowScheduleForm(true)}>Generate Meeting Link (Scheduled)</button>
-          <button type="button" className="px-6 py-2 bg-purple-500 text-white rounded-lg" onClick={generateInstantMeeting}>Generate Instant Meeting Link</button>
-        </form>
+        {joinGenerateUI}
         {showScheduleForm && (
           <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
             <form onSubmit={handleSchedule} className="bg-slate-800 p-8 rounded-2xl shadow-xl w-full max-w-md">
@@ -705,6 +716,7 @@ const Meeting: React.FC = () => {
     if (meetingDetails) {
       return (
         <div className="min-h-screen bg-gradient-to-br from-slate-900 via-blue-900 to-black flex flex-row items-start justify-center py-12 px-4 mt-20">
+          {joinGenerateUI}
           {/* Main meeting content (left) */}
           <div className="flex-1 flex flex-col items-center justify-center">
             <h1 className="text-white text-4xl md:text-5xl font-bold mb-6 tracking-wide text-center drop-shadow-lg">{meetingDetails.title || 'PrismMeet - Meeting Room'}</h1>
@@ -1048,7 +1060,7 @@ const Meeting: React.FC = () => {
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-900 via-blue-900 to-black flex flex-col items-center justify-center py-12 px-4">
-      <h1 className="text-white text-4xl md:text-5xl font-bold mb-6 tracking-wide text-center drop-shadow-lg">PrismMeet - Meeting Room</h1>
+      {joinGenerateUI}
       <div className="bg-slate-800/90 rounded-3xl shadow-2xl flex flex-col items-center w-full max-w-5xl p-0">
         {/* AI Note Taker Panel */}
         <div className="w-full flex flex-row justify-end items-center px-6 pt-6">
