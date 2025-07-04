@@ -753,6 +753,20 @@ const Meeting: React.FC = () => {
                       <span className={`mt-1 text-xs ${camOn ? 'text-green-400' : 'text-red-400'}`}>{camOn ? 'Camera On' : 'Camera Off'}</span>
                     </div>
                   ))}
+                  {screenSharing && screenStream && (
+                    <div className="flex flex-col items-center w-72 h-80">
+                      <span className="text-white text-lg font-semibold mb-2">Screen Share (You)</span>
+                      <video
+                        ref={screenVideoRef}
+                        autoPlay
+                        playsInline
+                        muted
+                        className="w-72 h-56 rounded-2xl bg-slate-900 object-cover border-2 border-amber-400 shadow-lg"
+                      />
+                      <span className="text-slate-300 mt-2 text-base font-semibold">{user.name || user.email || 'You'}</span>
+                      <span className="mt-1 text-xs text-amber-400">Screen Sharing</span>
+                    </div>
+                  )}
                 </div>
               </div>
               {/* Video Grid Placeholder */}
@@ -1068,6 +1082,20 @@ const Meeting: React.FC = () => {
                 <span className={`mt-1 text-xs ${camOn ? 'text-green-400' : 'text-red-400'}`}>{camOn ? 'Camera On' : 'Camera Off'}</span>
               </div>
             ))}
+            {screenSharing && screenStream && (
+              <div className="flex flex-col items-center w-72 h-80">
+                <span className="text-white text-lg font-semibold mb-2">Screen Share (You)</span>
+                <video
+                  ref={screenVideoRef}
+                  autoPlay
+                  playsInline
+                  muted
+                  className="w-72 h-56 rounded-2xl bg-slate-900 object-cover border-2 border-amber-400 shadow-lg"
+                />
+                <span className="text-slate-300 mt-2 text-base font-semibold">{user.name || user.email || 'You'}</span>
+                <span className="mt-1 text-xs text-amber-400">Screen Sharing</span>
+              </div>
+            )}
           </div>
         </div>
         {/* Video Grid Placeholder */}
