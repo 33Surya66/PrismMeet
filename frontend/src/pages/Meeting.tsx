@@ -77,6 +77,7 @@ const Meeting: React.FC = () => {
   // WebRTC: remote streams and peer connections
   const [remoteParticipants, setRemoteParticipants] = useState<{ [socketId: string]: { stream: MediaStream, user: any, camOn: boolean, micOn: boolean } }>({});
   const peersRef = useRef<{ [socketId: string]: RTCPeerConnection }>({});
+  const [remoteScreenShares, setRemoteScreenShares] = useState<{ [socketId: string]: { stream: MediaStream, user: any } }>({});
 
   // Memoize user object so it is stable across renders
   const user: any = useMemo(() => {
@@ -137,35 +138,41 @@ const Meeting: React.FC = () => {
   };
 
   const startScreenShare = async () => {
-    console.log('Share screen button clicked');
     if (!localStream) {
       alert('You must start the meeting (enable camera/mic) before sharing your screen.');
       return;
     }
     if (!('getDisplayMedia' in navigator.mediaDevices)) {
       alert('Screen sharing is not supported in this browser or context.');
-      console.error('getDisplayMedia not available on navigator.mediaDevices');
       return;
     }
     try {
-      // Always request the entire desktop
       const sStream = await (navigator.mediaDevices as any).getDisplayMedia({
-        video: {
-          displaySurface: 'monitor', // Prefer full desktop
-          cursor: 'always',
-        },
+        video: { displaySurface: 'monitor', cursor: 'always' },
         audio: false
       });
       setScreenStream(sStream);
       setScreenSharing(true);
+      // Add screen tracks to all peer connections
+      Object.values(peersRef.current).forEach(pc => {
+        sStream.getTracks().forEach(track => {
+          pc.addTrack(track, sStream);
+        });
+      });
       sStream.getVideoTracks()[0].onended = () => {
+        // Remove screen tracks from all peer connections
+        Object.values(peersRef.current).forEach(pc => {
+          pc.getSenders().forEach(sender => {
+            if (sender.track && sender.track.kind === 'video' && sender.track.label.toLowerCase().includes('screen')) {
+              pc.removeTrack(sender);
+            }
+          });
+        });
         setScreenSharing(false);
         setScreenStream(null);
       };
-      console.log('Screen sharing started');
     } catch (err) {
       alert('Could not share screen: ' + err);
-      console.error('Screen sharing error:', err);
     }
   };
 
@@ -487,9 +494,10 @@ const Meeting: React.FC = () => {
     // Helper: create a new peer connection
     const createPeerConnection = (socketId: string, remoteUser: any, isInitiator: boolean) => {
       const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
-      // Add local tracks
       localStream.getTracks().forEach(track => pc.addTrack(track, localStream));
-      // ICE candidates
+      if (screenStream && screenSharing) {
+        screenStream.getTracks().forEach(track => pc.addTrack(track, screenStream));
+      }
       pc.onicecandidate = (event) => {
         if (event.candidate) {
           socket.emit('signal', {
@@ -500,22 +508,31 @@ const Meeting: React.FC = () => {
           });
         }
       };
-      // Remote stream
       pc.ontrack = (event) => {
-        setRemoteParticipants(prev => ({
-          ...prev,
-          [socketId]: {
-            stream: event.streams[0],
-            user: remoteUser,
-            camOn: true, // Assume on, update via signaling if needed
-            micOn: true
-          }
-        }));
+        // Distinguish between camera and screen share
+        const isScreen = event.track.label.toLowerCase().includes('screen') || event.track.label.toLowerCase().includes('display');
+        if (isScreen) {
+          setRemoteScreenShares(prev => ({ ...prev, [socketId]: { stream: event.streams[0], user: remoteUser } }));
+        } else {
+          setRemoteParticipants(prev => ({
+            ...prev,
+            [socketId]: {
+              stream: event.streams[0],
+              user: remoteUser,
+              camOn: true,
+              micOn: true
+            }
+          }));
+        }
       };
-      // Remove remote stream on close
       pc.onconnectionstatechange = () => {
         if (pc.connectionState === 'disconnected' || pc.connectionState === 'closed') {
           setRemoteParticipants(prev => {
+            const copy = { ...prev };
+            delete copy[socketId];
+            return copy;
+          });
+          setRemoteScreenShares(prev => {
             const copy = { ...prev };
             delete copy[socketId];
             return copy;
@@ -575,6 +592,11 @@ const Meeting: React.FC = () => {
           delete copy[socketId];
           return copy;
         });
+        setRemoteScreenShares(prev => {
+          const copy = { ...prev };
+          delete copy[socketId];
+          return copy;
+        });
       }
     };
 
@@ -593,6 +615,7 @@ const Meeting: React.FC = () => {
       Object.values(peersRef.current).forEach(pc => pc.close());
       peersRef.current = {};
       setRemoteParticipants({});
+      setRemoteScreenShares({});
     };
   }, [localStream, meetingIdParam, user]);
 
