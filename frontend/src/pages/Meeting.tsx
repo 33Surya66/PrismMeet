@@ -142,17 +142,7 @@ const Meeting: React.FC = () => {
     </div>
   );
 
-  // Defensive check: if no meetingIdParam, show message and return early
-  if (!meetingIdParam) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-slate-900 via-blue-900 to-black">
-        <div className="bg-slate-800/90 p-8 rounded-2xl shadow-2xl w-full max-w-md flex flex-col items-center">
-          <h2 className="text-2xl font-bold text-white mb-4">No Meeting Selected</h2>
-          <p className="text-slate-300 mb-4">Please join or create a meeting first.</p>
-        </div>
-      </div>
-    );
-  }
+
 
   useEffect(() => {
     if (localVideoRef.current && localStream) {
