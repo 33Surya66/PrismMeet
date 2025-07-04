@@ -36,11 +36,12 @@ const Hero = () => {
               Start Free Meeting
               <ArrowRight className="w-5 h-5 ml-2 group-hover:translate-x-1 transition-transform" />
             </button>
-            
+            {/*
             <button className="px-8 py-4 bg-black/20 backdrop-blur-sm text-white rounded-xl font-semibold text-lg border border-blue-500/30 hover:bg-black/30 transition-all duration-300 flex items-center">
               <Video className="w-6 h-6 mr-3" />
               Watch Demo
             </button>
+            */}
           </div>
         </div>
 
@@ -79,7 +80,7 @@ const Hero = () => {
           </div>
         </div>
 
-        {/* Demo Video Placeholder */}
+        {/* Demo Video Placeholder
         <div className="relative max-w-5xl mx-auto">
           <div className="aspect-video bg-gradient-to-r from-blue-900/50 to-black/50 rounded-3xl border border-blue-500/30 backdrop-blur-sm overflow-hidden">
             <div className="flex items-center justify-center h-full">
@@ -92,11 +93,10 @@ const Hero = () => {
               </div>
             </div>
           </div>
-          
-          {/* Floating elements */}
           <div className="absolute -top-6 -left-6 w-12 h-12 bg-gradient-to-r from-blue-500 to-blue-700 rounded-full opacity-60 animate-pulse"></div>
           <div className="absolute -bottom-6 -right-6 w-8 h-8 bg-gradient-to-r from-blue-600 to-blue-800 rounded-full opacity-40 animate-pulse"></div>
         </div>
+        */}
       </div>
     </section>
   );

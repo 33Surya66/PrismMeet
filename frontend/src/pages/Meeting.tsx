@@ -39,10 +39,8 @@ const Meeting: React.FC = () => {
   const [aiListening, setAiListening] = useState(false);
   const recognitionRef = useRef<any>(null);
   const [notesSaved, setNotesSaved] = useState(false);
-  const meetingId = 'demo-meeting'; // TODO: Replace with real meeting ID
   const [showSettings, setShowSettings] = useState(false);
   const [showEndConfirm, setShowEndConfirm] = useState(false);
-  const isHost = true; // TODO: Replace with real host check
   const navigate = useNavigate();
   const location = useLocation();
   const [showScheduleForm, setShowScheduleForm] = useState(false);
@@ -76,6 +74,9 @@ const Meeting: React.FC = () => {
   const [mom, setMom] = useState<string | null>(null);
   const [momLoading, setMomLoading] = useState(false);
   const chatEndRef = useRef<HTMLDivElement>(null);
+  // WebRTC: remote streams and peer connections
+  const [remoteStreams, setRemoteStreams] = useState<{ [socketId: string]: MediaStream }>({});
+  const peersRef = useRef<{ [socketId: string]: RTCPeerConnection }>({});
 
   // Memoize user object so it is stable across renders
   const user: any = useMemo(() => {
@@ -210,7 +211,7 @@ const Meeting: React.FC = () => {
     if (!aiListening) return;
     const interval = setInterval(() => {
       if (aiNotes.trim()) {
-        fetch(`${API_URL}/api/ai/${meetingId}/notes`, {
+        fetch(`${API_URL}/api/ai/${meetingIdParam}/notes`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ notes: aiNotes, speaker: user.name || 'Unknown' }),
@@ -458,6 +459,20 @@ const Meeting: React.FC = () => {
     setMomLoading(false);
   };
 
+  // Host detection: compare user.id to meetingDetails.host_id (if available)
+  const isHost = useMemo(() => {
+    if (!meetingDetails || !user) return false;
+    // Prefer user.id and meetingDetails.host_id if available
+    if (user.id && meetingDetails.host_id) {
+      return String(user.id) === String(meetingDetails.host_id);
+    }
+    // Fallback: try matching email if host_email is available
+    if (user.email && meetingDetails.host_email) {
+      return user.email === meetingDetails.host_email;
+    }
+    return false;
+  }, [meetingDetails, user]);
+
   if (showJoinModal) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-slate-900 via-blue-900 to-black">
@@ -539,12 +554,22 @@ const Meeting: React.FC = () => {
     }
     if (meetingDetails) {
       return (
-        <div className="min-h-screen bg-gradient-to-br from-slate-900 via-blue-900 to-black flex flex-row items-start justify-center py-12 px-4">
+        <div className="min-h-screen bg-gradient-to-br from-slate-900 via-blue-900 to-black flex flex-row items-start justify-center py-12 px-4 mt-20">
           {/* Main meeting content (left) */}
           <div className="flex-1 flex flex-col items-center justify-center">
             <h1 className="text-white text-4xl md:text-5xl font-bold mb-6 tracking-wide text-center drop-shadow-lg">{meetingDetails.title || 'PrismMeet - Meeting Room'}</h1>
-            <div className="text-slate-300 mb-2">Meeting ID: <span className="font-mono">{meetingDetails.id}</span></div>
-            <div className="text-slate-300 mb-2">Participants: {(meetingDetails.participants || []).join(', ')}</div>
+            {/* Add divider and info panel below header */}
+            <div className="w-full flex flex-col items-center mb-6">
+              <div className="w-full max-w-2xl border-b border-slate-600 mb-4"></div>
+              <div className="w-full max-w-2xl bg-slate-700/80 rounded-xl shadow p-4 flex flex-col md:flex-row md:items-center md:justify-between gap-2">
+                <div className="text-slate-200 text-base font-mono">
+                  <span className="font-semibold text-slate-300">Meeting ID:</span> <span className="select-all">{meetingDetails.id}</span>
+                </div>
+                <div className="text-slate-200 text-base truncate">
+                  <span className="font-semibold text-slate-300">Participants:</span> {(meetingDetails.participants || []).join(', ')}
+                </div>
+              </div>
+            </div>
             <div className="bg-slate-800/90 rounded-3xl shadow-2xl flex flex-col items-center w-full max-w-5xl p-0">
               {/* AI Note Taker Panel */}
               <div className="w-full flex flex-row justify-end items-center px-6 pt-6">
@@ -568,8 +593,9 @@ const Meeting: React.FC = () => {
               </div>
               <div className="w-full flex flex-col items-center justify-center p-6 pb-0">
                 <div className={`w-full flex ${screenSharing ? 'flex-row gap-6' : 'justify-center'} items-center aspect-video`}>
+                  {/* Local video */}
                   <div className="flex flex-col items-center w-full h-full">
-                    <span className="text-white text-lg font-semibold mb-2">Camera</span>
+                    <span className="text-white text-lg font-semibold mb-2">Camera (You)</span>
                     {camOn ? (
                       <video ref={localVideoRef} autoPlay playsInline muted className="w-full h-[420px] max-h-[60vh] rounded-2xl bg-slate-900 object-cover border-2 border-slate-400 shadow-lg" />
                     ) : (
@@ -579,13 +605,21 @@ const Meeting: React.FC = () => {
                     )}
                     <span className="text-slate-300 mt-2 text-base font-semibold">{user.name || user.email || 'You'}</span>
                   </div>
-                  {screenSharing && screenStream && (
-                    <div className="flex flex-col items-center w-full h-full">
-                      <span className="text-white text-lg font-semibold mb-2">Screen Share</span>
-                      <span className="text-xs text-amber-300 mb-1">(You are sharing your entire desktop)</span>
-                      <video ref={screenVideoRef} autoPlay playsInline muted className="w-full h-[420px] max-h-[60vh] rounded-2xl bg-slate-900 object-cover border-2 border-amber-400 shadow-lg" />
+                  {/* Remote videos */}
+                  {Object.entries(remoteStreams).map(([socketId, stream]) => (
+                    <div key={socketId} className="flex flex-col items-center w-full h-full">
+                      <span className="text-white text-lg font-semibold mb-2">Participant</span>
+                      <video
+                        autoPlay
+                        playsInline
+                        className="w-full h-[420px] max-h-[60vh] rounded-2xl bg-slate-900 object-cover border-2 border-blue-400 shadow-lg"
+                        ref={el => {
+                          if (el && stream) el.srcObject = stream;
+                        }}
+                      />
+                      <span className="text-slate-300 mt-2 text-base font-semibold">{socketId}</span>
                     </div>
-                  )}
+                  ))}
                 </div>
               </div>
               {/* Video Grid Placeholder */}
@@ -864,8 +898,9 @@ const Meeting: React.FC = () => {
         </div>
         <div className="w-full flex flex-col items-center justify-center p-6 pb-0">
           <div className={`w-full flex ${screenSharing ? 'flex-row gap-6' : 'justify-center'} items-center aspect-video`}>
+            {/* Local video */}
             <div className="flex flex-col items-center w-full h-full">
-              <span className="text-white text-lg font-semibold mb-2">Camera</span>
+              <span className="text-white text-lg font-semibold mb-2">Camera (You)</span>
               {camOn ? (
                 <video ref={localVideoRef} autoPlay playsInline muted className="w-full h-[420px] max-h-[60vh] rounded-2xl bg-slate-900 object-cover border-2 border-slate-400 shadow-lg" />
               ) : (
@@ -875,13 +910,21 @@ const Meeting: React.FC = () => {
               )}
               <span className="text-slate-300 mt-2 text-base font-semibold">{user.name || user.email || 'You'}</span>
             </div>
-            {screenSharing && screenStream && (
-              <div className="flex flex-col items-center w-full h-full">
-                <span className="text-white text-lg font-semibold mb-2">Screen Share</span>
-                <span className="text-xs text-amber-300 mb-1">(You are sharing your entire desktop)</span>
-                <video ref={screenVideoRef} autoPlay playsInline muted className="w-full h-[420px] max-h-[60vh] rounded-2xl bg-slate-900 object-cover border-2 border-amber-400 shadow-lg" />
+            {/* Remote videos */}
+            {Object.entries(remoteStreams).map(([socketId, stream]) => (
+              <div key={socketId} className="flex flex-col items-center w-full h-full">
+                <span className="text-white text-lg font-semibold mb-2">Participant</span>
+                <video
+                  autoPlay
+                  playsInline
+                  className="w-full h-[420px] max-h-[60vh] rounded-2xl bg-slate-900 object-cover border-2 border-blue-400 shadow-lg"
+                  ref={el => {
+                    if (el && stream) el.srcObject = stream;
+                  }}
+                />
+                <span className="text-slate-300 mt-2 text-base font-semibold">{socketId}</span>
               </div>
-            )}
+            ))}
           </div>
         </div>
         {/* Video Grid Placeholder */}

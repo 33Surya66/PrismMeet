@@ -31,16 +31,23 @@ router.post('/', auth, (req, res) => {
       if (err) return res.status(500).json({ error: 'Could not create meeting' });
       // Add host as participant
       db.run('INSERT INTO meeting_participants (meeting_id, user_id) VALUES (?, ?)', [id, host_id]);
-      // Add other participants
+      // Add other participants by email
       if (Array.isArray(participants)) {
-        participants.forEach(user_id => {
-          db.run('INSERT INTO meeting_participants (meeting_id, user_id) VALUES (?, ?)', [id, user_id]);
+        participants.forEach(email => {
+          db.get('SELECT id FROM users WHERE email = ?', [email], (err, user) => {
+            if (!err && user) {
+              db.run('INSERT INTO meeting_participants (meeting_id, user_id) VALUES (?, ?)', [id, user.id]);
+            }
+          });
         });
       }
-      // Fetch the full meeting object to return
+      // Fetch the full meeting object to return (with participant emails)
       db.get('SELECT * FROM meetings WHERE id = ?', [id], (err, meeting) => {
         if (err || !meeting) return res.status(500).json({ error: 'Could not fetch created meeting' });
-        res.json(meeting);
+        db.all('SELECT u.email FROM meeting_participants mp JOIN users u ON mp.user_id = u.id WHERE mp.meeting_id = ?', [id], (err, emails) => {
+          meeting.participants = emails ? emails.map(e => e.email) : [];
+          res.json(meeting);
+        });
       });
     }
   );
@@ -61,7 +68,7 @@ router.get('/', auth, (req, res) => {
   );
 });
 
-// Get meeting details (with participants)
+// Get meeting details (with participant emails)
 router.get('/:id', auth, (req, res) => {
   db.get('SELECT * FROM meetings WHERE id = ?', [req.params.id], (err, meeting) => {
     if (err || !meeting) return res.status(404).json({ error: 'Meeting not found' });
@@ -72,17 +79,32 @@ router.get('/:id', auth, (req, res) => {
         // Add user as participant if not already
         db.run('INSERT INTO meeting_participants (meeting_id, user_id) VALUES (?, ?)', [req.params.id, req.user.id], (err) => {
           if (err) return res.status(500).json({ error: 'Could not add participant' });
-          db.all('SELECT user_id FROM meeting_participants WHERE meeting_id = ?', [req.params.id], (err, participants) => {
-            if (err) return res.status(500).json({ error: 'Could not fetch participants' });
-            meeting.participants = participants.map(p => p.user_id);
-            res.json(meeting);
+          db.all('SELECT u.email FROM meeting_participants mp JOIN users u ON mp.user_id = u.id WHERE mp.meeting_id = ?', [req.params.id], (err, emails) => {
+            meeting.participants = emails ? emails.map(e => e.email) : [];
+            // Add host_email for robust host detection
+            if (meeting.host_id) {
+              db.get('SELECT email FROM users WHERE id = ?', [meeting.host_id], (err, hostUser) => {
+                meeting.host_email = hostUser ? hostUser.email : null;
+                res.json(meeting);
+              });
+            } else {
+              res.json(meeting);
+            }
           });
         });
       } else {
-        db.all('SELECT user_id FROM meeting_participants WHERE meeting_id = ?', [req.params.id], (err, participants) => {
+        db.all('SELECT u.email FROM meeting_participants mp JOIN users u ON mp.user_id = u.id WHERE mp.meeting_id = ?', [req.params.id], (err, emails) => {
           if (err) return res.status(500).json({ error: 'Could not fetch participants' });
-          meeting.participants = participants.map(p => p.user_id);
-          res.json(meeting);
+          meeting.participants = emails ? emails.map(e => e.email) : [];
+          // Add host_email for robust host detection
+          if (meeting.host_id) {
+            db.get('SELECT email FROM users WHERE id = ?', [meeting.host_id], (err, hostUser) => {
+              meeting.host_email = hostUser ? hostUser.email : null;
+              res.json(meeting);
+            });
+          } else {
+            res.json(meeting);
+          }
         });
       }
     });
