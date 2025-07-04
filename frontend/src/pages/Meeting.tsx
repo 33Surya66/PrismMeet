@@ -75,7 +75,7 @@ const Meeting: React.FC = () => {
   const [momLoading, setMomLoading] = useState(false);
   const chatEndRef = useRef<HTMLDivElement>(null);
   // WebRTC: remote streams and peer connections
-  const [remoteStreams, setRemoteStreams] = useState<{ [socketId: string]: MediaStream }>({});
+  const [remoteParticipants, setRemoteParticipants] = useState<{ [socketId: string]: { stream: MediaStream, user: any, camOn: boolean, micOn: boolean } }>({});
   const peersRef = useRef<{ [socketId: string]: RTCPeerConnection }>({});
 
   // Memoize user object so it is stable across renders
@@ -91,6 +91,12 @@ const Meeting: React.FC = () => {
 
   const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:4000';
   const SOCKET_URL = API_URL.replace(/^http:/, 'https:');
+
+  const ICE_SERVERS = [
+    { urls: 'stun:stun.l.google.com:19302' },
+    // Example public TURN server (for demo/testing only; use your own for production)
+    { urls: 'turn:openrelay.metered.ca:80', username: 'openrelayproject', credential: 'openrelayproject' }
+  ];
 
   useEffect(() => {
     if (localVideoRef.current && localStream) {
@@ -110,7 +116,7 @@ const Meeting: React.FC = () => {
       setLocalStream(stream);
       setStarted(true);
     } catch (err) {
-      alert("Could not access camera/mic: " + err);
+      alert("Could not access camera/mic: " + (err && err.message ? err.message : err));
     }
   };
 
@@ -473,6 +479,123 @@ const Meeting: React.FC = () => {
     return false;
   }, [meetingDetails, user]);
 
+  // --- WebRTC Multi-Participant Logic ---
+  useEffect(() => {
+    if (!socketRef.current || !localStream) return;
+    const socket = socketRef.current;
+
+    // Helper: create a new peer connection
+    const createPeerConnection = (socketId: string, remoteUser: any, isInitiator: boolean) => {
+      const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
+      // Add local tracks
+      localStream.getTracks().forEach(track => pc.addTrack(track, localStream));
+      // ICE candidates
+      pc.onicecandidate = (event) => {
+        if (event.candidate) {
+          socket.emit('signal', {
+            meetingId: meetingIdParam,
+            to: socketId,
+            from: socket.id,
+            data: { type: 'ice-candidate', candidate: event.candidate }
+          });
+        }
+      };
+      // Remote stream
+      pc.ontrack = (event) => {
+        setRemoteParticipants(prev => ({
+          ...prev,
+          [socketId]: {
+            stream: event.streams[0],
+            user: remoteUser,
+            camOn: true, // Assume on, update via signaling if needed
+            micOn: true
+          }
+        }));
+      };
+      // Remove remote stream on close
+      pc.onconnectionstatechange = () => {
+        if (pc.connectionState === 'disconnected' || pc.connectionState === 'closed') {
+          setRemoteParticipants(prev => {
+            const copy = { ...prev };
+            delete copy[socketId];
+            return copy;
+          });
+        }
+      };
+      peersRef.current[socketId] = pc;
+      return pc;
+    };
+
+    // Handle new participant
+    const handleNewParticipant = ({ socketId, user: remoteUser }) => {
+      if (peersRef.current[socketId]) return; // already connected
+      const pc = createPeerConnection(socketId, remoteUser, true);
+      // Initiator: create offer
+      pc.createOffer().then(offer => {
+        pc.setLocalDescription(offer);
+        socket.emit('signal', {
+          meetingId: meetingIdParam,
+          to: socketId,
+          from: socket.id,
+          data: { type: 'offer', sdp: offer }
+        });
+      });
+    };
+
+    // Handle signal
+    const handleSignal = async ({ from, data }) => {
+      let pc = peersRef.current[from];
+      if (!pc) pc = createPeerConnection(from, {}, false);
+      if (data.type === 'offer') {
+        await pc.setRemoteDescription(new RTCSessionDescription(data.sdp));
+        const answer = await pc.createAnswer();
+        await pc.setLocalDescription(answer);
+        socket.emit('signal', {
+          meetingId: meetingIdParam,
+          to: from,
+          from: socket.id,
+          data: { type: 'answer', sdp: answer }
+        });
+      } else if (data.type === 'answer') {
+        await pc.setRemoteDescription(new RTCSessionDescription(data.sdp));
+      } else if (data.type === 'ice-candidate') {
+        try {
+          await pc.addIceCandidate(new RTCIceCandidate(data.candidate));
+        } catch (e) { /* ignore */ }
+      }
+    };
+
+    // Handle participant left
+    const handleParticipantLeft = ({ socketId }) => {
+      if (peersRef.current[socketId]) {
+        peersRef.current[socketId].close();
+        delete peersRef.current[socketId];
+        setRemoteParticipants(prev => {
+          const copy = { ...prev };
+          delete copy[socketId];
+          return copy;
+        });
+      }
+    };
+
+    socket.on('new-participant', handleNewParticipant);
+    socket.on('signal', handleSignal);
+    socket.on('participant-left', handleParticipantLeft);
+
+    // On mount, announce self to others (for late joiners)
+    socket.emit('join-meeting', { meetingId: meetingIdParam, user });
+
+    return () => {
+      socket.off('new-participant', handleNewParticipant);
+      socket.off('signal', handleSignal);
+      socket.off('participant-left', handleParticipantLeft);
+      // Close all peer connections
+      Object.values(peersRef.current).forEach(pc => pc.close());
+      peersRef.current = {};
+      setRemoteParticipants({});
+    };
+  }, [localStream, meetingIdParam, user]);
+
   if (showJoinModal) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-slate-900 via-blue-900 to-black">
@@ -592,32 +715,42 @@ const Meeting: React.FC = () => {
                 </div>
               </div>
               <div className="w-full flex flex-col items-center justify-center p-6 pb-0">
-                <div className={`w-full flex ${screenSharing ? 'flex-row gap-6' : 'justify-center'} items-center aspect-video`}>
+                <div className={`w-full flex flex-wrap gap-4 justify-center items-center aspect-video`}>
                   {/* Local video */}
-                  <div className="flex flex-col items-center w-full h-full">
+                  <div className="flex flex-col items-center w-72 h-80">
                     <span className="text-white text-lg font-semibold mb-2">Camera (You)</span>
                     {camOn ? (
-                      <video ref={localVideoRef} autoPlay playsInline muted className="w-full h-[420px] max-h-[60vh] rounded-2xl bg-slate-900 object-cover border-2 border-slate-400 shadow-lg" />
+                      <video ref={localVideoRef} autoPlay playsInline muted className="w-72 h-56 rounded-2xl bg-slate-900 object-cover border-2 border-slate-400 shadow-lg" />
                     ) : (
-                      <div className="w-full h-[420px] max-h-[60vh] rounded-2xl bg-slate-900 flex items-center justify-center border-2 border-slate-400 shadow-lg">
+                      <div className="w-72 h-56 rounded-2xl bg-slate-900 flex items-center justify-center border-2 border-slate-400 shadow-lg">
                         <img src="/logo.png" alt="Camera Off" className="w-24 h-24 opacity-60" />
                       </div>
                     )}
                     <span className="text-slate-300 mt-2 text-base font-semibold">{user.name || user.email || 'You'}</span>
+                    <span className={`mt-1 text-xs ${micOn ? 'text-green-400' : 'text-red-400'}`}>{micOn ? 'Mic On' : 'Mic Off'}</span>
+                    <span className={`mt-1 text-xs ${camOn ? 'text-green-400' : 'text-red-400'}`}>{camOn ? 'Camera On' : 'Camera Off'}</span>
                   </div>
                   {/* Remote videos */}
-                  {Object.entries(remoteStreams).map(([socketId, stream]) => (
-                    <div key={socketId} className="flex flex-col items-center w-full h-full">
-                      <span className="text-white text-lg font-semibold mb-2">Participant</span>
-                      <video
-                        autoPlay
-                        playsInline
-                        className="w-full h-[420px] max-h-[60vh] rounded-2xl bg-slate-900 object-cover border-2 border-blue-400 shadow-lg"
-                        ref={el => {
-                          if (el && stream) el.srcObject = stream;
-                        }}
-                      />
-                      <span className="text-slate-300 mt-2 text-base font-semibold">{socketId}</span>
+                  {Object.entries(remoteParticipants).map(([socketId, { stream, user: remoteUser, camOn, micOn }]) => (
+                    <div key={socketId} className="flex flex-col items-center w-72 h-80">
+                      <span className="text-white text-lg font-semibold mb-2">{remoteUser?.name || remoteUser?.email || 'Participant'}</span>
+                      {camOn !== false ? (
+                        <video
+                          autoPlay
+                          playsInline
+                          className="w-72 h-56 rounded-2xl bg-slate-900 object-cover border-2 border-blue-400 shadow-lg"
+                          ref={el => {
+                            if (el && stream) el.srcObject = stream;
+                          }}
+                        />
+                      ) : (
+                        <div className="w-72 h-56 rounded-2xl bg-slate-900 flex items-center justify-center border-2 border-blue-400 shadow-lg">
+                          <img src="/logo.png" alt="Camera Off" className="w-24 h-24 opacity-60" />
+                        </div>
+                      )}
+                      <span className="text-slate-300 mt-2 text-base font-semibold">{remoteUser?.name || remoteUser?.email || socketId}</span>
+                      <span className={`mt-1 text-xs ${micOn ? 'text-green-400' : 'text-red-400'}`}>{micOn ? 'Mic On' : 'Mic Off'}</span>
+                      <span className={`mt-1 text-xs ${camOn ? 'text-green-400' : 'text-red-400'}`}>{camOn ? 'Camera On' : 'Camera Off'}</span>
                     </div>
                   ))}
                 </div>
@@ -897,32 +1030,42 @@ const Meeting: React.FC = () => {
           </div>
         </div>
         <div className="w-full flex flex-col items-center justify-center p-6 pb-0">
-          <div className={`w-full flex ${screenSharing ? 'flex-row gap-6' : 'justify-center'} items-center aspect-video`}>
+          <div className={`w-full flex flex-wrap gap-4 justify-center items-center aspect-video`}>
             {/* Local video */}
-            <div className="flex flex-col items-center w-full h-full">
+            <div className="flex flex-col items-center w-72 h-80">
               <span className="text-white text-lg font-semibold mb-2">Camera (You)</span>
               {camOn ? (
-                <video ref={localVideoRef} autoPlay playsInline muted className="w-full h-[420px] max-h-[60vh] rounded-2xl bg-slate-900 object-cover border-2 border-slate-400 shadow-lg" />
+                <video ref={localVideoRef} autoPlay playsInline muted className="w-72 h-56 rounded-2xl bg-slate-900 object-cover border-2 border-slate-400 shadow-lg" />
               ) : (
-                <div className="w-full h-[420px] max-h-[60vh] rounded-2xl bg-slate-900 flex items-center justify-center border-2 border-slate-400 shadow-lg">
+                <div className="w-72 h-56 rounded-2xl bg-slate-900 flex items-center justify-center border-2 border-slate-400 shadow-lg">
                   <img src="/logo.png" alt="Camera Off" className="w-24 h-24 opacity-60" />
                 </div>
               )}
               <span className="text-slate-300 mt-2 text-base font-semibold">{user.name || user.email || 'You'}</span>
+              <span className={`mt-1 text-xs ${micOn ? 'text-green-400' : 'text-red-400'}`}>{micOn ? 'Mic On' : 'Mic Off'}</span>
+              <span className={`mt-1 text-xs ${camOn ? 'text-green-400' : 'text-red-400'}`}>{camOn ? 'Camera On' : 'Camera Off'}</span>
             </div>
             {/* Remote videos */}
-            {Object.entries(remoteStreams).map(([socketId, stream]) => (
-              <div key={socketId} className="flex flex-col items-center w-full h-full">
-                <span className="text-white text-lg font-semibold mb-2">Participant</span>
-                <video
-                  autoPlay
-                  playsInline
-                  className="w-full h-[420px] max-h-[60vh] rounded-2xl bg-slate-900 object-cover border-2 border-blue-400 shadow-lg"
-                  ref={el => {
-                    if (el && stream) el.srcObject = stream;
-                  }}
-                />
-                <span className="text-slate-300 mt-2 text-base font-semibold">{socketId}</span>
+            {Object.entries(remoteParticipants).map(([socketId, { stream, user: remoteUser, camOn, micOn }]) => (
+              <div key={socketId} className="flex flex-col items-center w-72 h-80">
+                <span className="text-white text-lg font-semibold mb-2">{remoteUser?.name || remoteUser?.email || 'Participant'}</span>
+                {camOn !== false ? (
+                  <video
+                    autoPlay
+                    playsInline
+                    className="w-72 h-56 rounded-2xl bg-slate-900 object-cover border-2 border-blue-400 shadow-lg"
+                    ref={el => {
+                      if (el && stream) el.srcObject = stream;
+                    }}
+                  />
+                ) : (
+                  <div className="w-72 h-56 rounded-2xl bg-slate-900 flex items-center justify-center border-2 border-blue-400 shadow-lg">
+                    <img src="/logo.png" alt="Camera Off" className="w-24 h-24 opacity-60" />
+                  </div>
+                )}
+                <span className="text-slate-300 mt-2 text-base font-semibold">{remoteUser?.name || remoteUser?.email || socketId}</span>
+                <span className={`mt-1 text-xs ${micOn ? 'text-green-400' : 'text-red-400'}`}>{micOn ? 'Mic On' : 'Mic Off'}</span>
+                <span className={`mt-1 text-xs ${camOn ? 'text-green-400' : 'text-red-400'}`}>{camOn ? 'Camera On' : 'Camera Off'}</span>
               </div>
             ))}
           </div>
