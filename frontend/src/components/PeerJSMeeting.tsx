@@ -43,6 +43,8 @@ const PeerJSMeeting: React.FC = () => {
   const [chatInput, setChatInput] = useState('');
   const [remoteParticipants, setRemoteParticipants] = useState<{ [peerId: string]: { stream: MediaStream, user: any, camOn: boolean, micOn: boolean } }>({});
   const [remoteScreenShares, setRemoteScreenShares] = useState<{ [peerId: string]: { stream: MediaStream, user: any } }>({});
+  const [peerConnected, setPeerConnected] = useState(false);
+  const [connectionStatus, setConnectionStatus] = useState<'connecting' | 'connected' | 'error'>('connecting');
   
   const { user, isLoggedIn } = useUser();
   const { id: meetingIdParam } = useParams();
@@ -68,29 +70,58 @@ const PeerJSMeeting: React.FC = () => {
       return;
     }
 
-    // Initialize PeerJS with free STUN servers
+    // Initialize PeerJS with better configuration
     const peer = new Peer(peerId, {
-      host: 'peerjs-server.herokuapp.com', // Free PeerJS server
+      // Use a more reliable PeerJS server or run your own
+      host: 'peerjs-server.herokuapp.com',
       port: 443,
       secure: true,
+      debug: 3, // Enable debug logging
       config: {
         iceServers: [
           { urls: 'stun:stun.l.google.com:19302' },
           { urls: 'stun:stun1.l.google.com:19302' },
           { urls: 'stun:stun2.l.google.com:19302' },
           { urls: 'stun:stun3.l.google.com:19302' },
-          { urls: 'stun:stun4.l.google.com:19302' }
+          { urls: 'stun:stun4.l.google.com:19302' },
+          // Add TURN servers for better connectivity (optional)
+          // { urls: 'turn:your-turn-server.com:3478', username: 'username', credential: 'password' }
         ]
       }
     });
 
     peerRef.current = peer;
 
-    // Handle peer connection
+    // Handle peer connection events
+    peer.on('open', (id) => {
+      console.log('🔗 PeerJS connected with ID:', id);
+      setPeerConnected(true);
+      setConnectionStatus('connected');
+    });
+
+    peer.on('error', (err) => {
+      console.error('❌ PeerJS error:', err);
+      setConnectionStatus('error');
+      if (err.type === 'peer-unavailable') {
+        console.log('Peer unavailable, will retry connection...');
+      } else if (err.type === 'network') {
+        console.log('Network error, checking connection...');
+      }
+    });
+
+    peer.on('disconnected', () => {
+      console.log('🔌 PeerJS disconnected, attempting to reconnect...');
+      setPeerConnected(false);
+      setConnectionStatus('connecting');
+      peer.reconnect();
+    });
+
+    // Handle incoming calls
     peer.on('call', (call) => {
       console.log('📞 Incoming call from:', call.peer);
       
       if (localStream) {
+        console.log('📹 Answering call with local stream');
         call.answer(localStream);
         
         call.on('stream', (remoteStream) => {
@@ -105,16 +136,36 @@ const PeerJSMeeting: React.FC = () => {
             }
           }));
         });
+
+        call.on('close', () => {
+          console.log('📞 Call closed with:', call.peer);
+          setRemoteParticipants(prev => {
+            const copy = { ...prev };
+            delete copy[call.peer];
+            return copy;
+          });
+        });
+
+        call.on('error', (err) => {
+          console.error('❌ Call error:', err);
+        });
+      } else {
+        console.log('⚠️ No local stream available, rejecting call');
+        call.close();
       }
     });
 
-    // Handle peer connection
+    // Handle data connections
     peer.on('connection', (conn) => {
-      console.log('🔗 Incoming connection from:', conn.peer);
+      console.log('🔗 Incoming data connection from:', conn.peer);
       connectionsRef.current[conn.peer] = conn;
       
+      conn.on('open', () => {
+        console.log('🔗 Data connection opened with:', conn.peer);
+      });
+      
       conn.on('data', (data: any) => {
-        console.log('📨 Received data:', data);
+        console.log('📨 Received data from:', conn.peer, data);
         if (data.type === 'user-info') {
           setRemoteParticipants(prev => ({
             ...prev,
@@ -123,7 +174,33 @@ const PeerJSMeeting: React.FC = () => {
               user: data.user
             }
           }));
+        } else if (data.type === 'mic-toggle') {
+          setRemoteParticipants(prev => ({
+            ...prev,
+            [conn.peer]: {
+              ...prev[conn.peer],
+              micOn: data.micOn
+            }
+          }));
+        } else if (data.type === 'cam-toggle') {
+          setRemoteParticipants(prev => ({
+            ...prev,
+            [conn.peer]: {
+              ...prev[conn.peer],
+              camOn: data.camOn
+            }
+          }));
         }
+      });
+
+      conn.on('close', () => {
+        console.log('🔗 Data connection closed with:', conn.peer);
+        delete connectionsRef.current[conn.peer];
+      });
+
+      conn.on('error', (err) => {
+        console.error('❌ Data connection error:', err);
+        delete connectionsRef.current[conn.peer];
       });
     });
 
@@ -147,7 +224,10 @@ const PeerJSMeeting: React.FC = () => {
     socket.on('new-participant', ({ socketId, user: remoteUser }) => {
       console.log('🟢 New participant:', remoteUser);
       if (remoteUser.peerId && remoteUser.peerId !== peerId) {
-        callPeer(remoteUser.peerId, remoteUser);
+        // Add a small delay to ensure PeerJS is ready
+        setTimeout(() => {
+          callPeer(remoteUser.peerId, remoteUser);
+        }, 1000);
       }
     });
 
@@ -173,51 +253,108 @@ const PeerJSMeeting: React.FC = () => {
     });
 
     return () => {
-      peer.destroy();
-      socket.disconnect();
+      console.log('🧹 Cleaning up PeerJS and socket connections');
+      
+      // Close all peer connections
+      Object.values(connectionsRef.current).forEach(conn => {
+        if (conn.open) {
+          conn.close();
+        }
+      });
+      connectionsRef.current = {};
+      
+      // Stop all media streams
+      if (localStream) {
+        localStream.getTracks().forEach(track => track.stop());
+      }
+      if (screenStream) {
+        screenStream.getTracks().forEach(track => track.stop());
+      }
+      
+      // Destroy peer and disconnect socket
+      if (peerRef.current) {
+        peerRef.current.destroy();
+      }
+      if (socketRef.current) {
+        socketRef.current.disconnect();
+      }
     };
   }, [meetingIdParam, isLoggedIn, user, peerId]);
 
   // Call a peer
   const callPeer = (remotePeerId: string, remoteUser: any) => {
-    if (!peerRef.current || !localStream) return;
+    if (!peerRef.current || !localStream) {
+      console.log('⚠️ Cannot call peer - missing peer or local stream');
+      return;
+    }
     
     console.log('📞 Calling peer:', remotePeerId);
-    const call = peerRef.current.call(remotePeerId, localStream);
     
-    call.on('stream', (remoteStream) => {
-      console.log('📹 Received stream from:', remotePeerId);
-      setRemoteParticipants(prev => ({
-        ...prev,
-        [remotePeerId]: {
-          stream: remoteStream,
-          user: remoteUser,
-          camOn: true,
-          micOn: true
-        }
-      }));
-    });
-
-    call.on('close', () => {
-      console.log('📞 Call closed with:', remotePeerId);
-      setRemoteParticipants(prev => {
-        const copy = { ...prev };
-        delete copy[remotePeerId];
-        return copy;
+    try {
+      const call = peerRef.current.call(remotePeerId, localStream);
+      
+      call.on('stream', (remoteStream) => {
+        console.log('📹 Received stream from:', remotePeerId);
+        setRemoteParticipants(prev => ({
+          ...prev,
+          [remotePeerId]: {
+            stream: remoteStream,
+            user: remoteUser,
+            camOn: true,
+            micOn: true
+          }
+        }));
       });
-    });
 
-    // Send user info via data connection
-    const conn = peerRef.current.connect(remotePeerId);
-    conn.on('open', () => {
-      conn.send({
-        type: 'user-info',
-        user: { 
-          name: user.name || user.email || 'Anonymous',
-          email: user.email 
-        }
+      call.on('close', () => {
+        console.log('📞 Call closed with:', remotePeerId);
+        setRemoteParticipants(prev => {
+          const copy = { ...prev };
+          delete copy[remotePeerId];
+          return copy;
+        });
       });
-    });
+
+      call.on('error', (err) => {
+        console.error('❌ Call error with:', remotePeerId, err);
+        setRemoteParticipants(prev => {
+          const copy = { ...prev };
+          delete copy[remotePeerId];
+          return copy;
+        });
+      });
+
+      // Send user info via data connection
+      try {
+        const conn = peerRef.current.connect(remotePeerId);
+        connectionsRef.current[remotePeerId] = conn;
+        
+        conn.on('open', () => {
+          console.log('🔗 Data connection opened with:', remotePeerId);
+          conn.send({
+            type: 'user-info',
+            user: { 
+              name: user.name || user.email || 'Anonymous',
+              email: user.email 
+            }
+          });
+        });
+
+        conn.on('close', () => {
+          console.log('🔗 Data connection closed with:', remotePeerId);
+          delete connectionsRef.current[remotePeerId];
+        });
+
+        conn.on('error', (err) => {
+          console.error('❌ Data connection error with:', remotePeerId, err);
+          delete connectionsRef.current[remotePeerId];
+        });
+      } catch (connErr) {
+        console.error('❌ Failed to create data connection with:', remotePeerId, connErr);
+      }
+    } catch (callErr) {
+      console.error('❌ Failed to call peer:', remotePeerId, callErr);
+    }
   };
 
   // Start meeting
@@ -235,19 +372,41 @@ const PeerJSMeeting: React.FC = () => {
   // Toggle mic
   const toggleMic = () => {
     if (!localStream) return;
+    const newMicState = !micOn;
     localStream.getAudioTracks().forEach(track => {
-      track.enabled = !micOn;
+      track.enabled = newMicState;
     });
-    setMicOn(!micOn);
+    setMicOn(newMicState);
+    
+    // Broadcast mic state to all connected peers
+    Object.values(connectionsRef.current).forEach(conn => {
+      if (conn.open) {
+        conn.send({
+          type: 'mic-toggle',
+          micOn: newMicState
+        });
+      }
+    });
   };
 
   // Toggle camera
   const toggleCam = () => {
     if (!localStream) return;
+    const newCamState = !camOn;
     localStream.getVideoTracks().forEach(track => {
-      track.enabled = !camOn;
+      track.enabled = newCamState;
     });
-    setCamOn(!camOn);
+    setCamOn(newCamState);
+    
+    // Broadcast cam state to all connected peers
+    Object.values(connectionsRef.current).forEach(conn => {
+      if (conn.open) {
+        conn.send({
+          type: 'cam-toggle',
+          camOn: newCamState
+        });
+      }
+    });
   };
 
   // Screen share
@@ -336,6 +495,26 @@ const PeerJSMeeting: React.FC = () => {
             </div>
             <div className="text-slate-200 text-base font-mono">
               <span className="font-semibold text-slate-300">Your Peer ID:</span> <span className="select-all">{peerId}</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="font-semibold text-slate-300">WebRTC:</span>
+              <div className={`w-3 h-3 rounded-full ${
+                connectionStatus === 'connected' ? 'bg-green-400' : 
+                connectionStatus === 'connecting' ? 'bg-yellow-400' : 'bg-red-400'
+              }`}></div>
+              <span className={`text-sm ${
+                connectionStatus === 'connected' ? 'text-green-400' : 
+                connectionStatus === 'connecting' ? 'text-yellow-400' : 'text-red-400'
+              }`}>
+                {connectionStatus === 'connected' ? 'Connected' : 
+                 connectionStatus === 'connecting' ? 'Connecting...' : 'Error'}
+              </span>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="font-semibold text-slate-300">Participants:</span>
+              <span className="text-sm text-slate-200">
+                {Object.keys(remoteParticipants).length + 1}
+              </span>
             </div>
           </div>
         </div>
