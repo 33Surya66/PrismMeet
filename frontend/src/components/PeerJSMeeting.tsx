@@ -358,37 +358,50 @@ const PeerJSMeeting: React.FC = () => {
       console.log('🔗 Incoming data connection from:', conn.peer);
       connectionsRef.current[conn.peer] = conn;
       
+      // Send current mic/cam state to the new peer
       conn.on('open', () => {
         console.log('🔗 Data connection opened with:', conn.peer);
+        conn.send({ type: 'mic-toggle', micOn });
+        conn.send({ type: 'cam-toggle', camOn });
       });
       
       conn.on('data', (data: any) => {
         console.log('📨 Received data from:', conn.peer, data);
-        if (data.type === 'user-info') {
-          setRemoteParticipants(prev => ({
-            ...prev,
-            [conn.peer]: {
-              ...prev[conn.peer],
-              user: data.user
-            }
-          }));
-        } else if (data.type === 'mic-toggle') {
-          setRemoteParticipants(prev => ({
-            ...prev,
-            [conn.peer]: {
-              ...prev[conn.peer],
-              micOn: data.micOn
-            }
-          }));
-        } else if (data.type === 'cam-toggle') {
-          setRemoteParticipants(prev => ({
-            ...prev,
-            [conn.peer]: {
-              ...prev[conn.peer],
-              camOn: data.camOn
-            }
-          }));
-        }
+        setRemoteParticipants(prev => {
+          const prevRemote = prev[conn.peer];
+          const base = {
+            stream: prevRemote?.stream || null,
+            user: prevRemote?.user || {},
+            camOn: typeof prevRemote?.camOn === 'boolean' ? prevRemote.camOn : true,
+            micOn: typeof prevRemote?.micOn === 'boolean' ? prevRemote.micOn : true,
+          };
+          if (data.type === 'user-info') {
+            return {
+              ...prev,
+              [conn.peer]: {
+                ...base,
+                user: data.user
+              }
+            };
+          } else if (data.type === 'mic-toggle') {
+            return {
+              ...prev,
+              [conn.peer]: {
+                ...base,
+                micOn: data.micOn
+              }
+            };
+          } else if (data.type === 'cam-toggle') {
+            return {
+              ...prev,
+              [conn.peer]: {
+                ...base,
+                camOn: data.camOn
+              }
+            };
+          }
+          return prev;
+        });
       });
 
       conn.on('close', () => {
@@ -586,6 +599,8 @@ const PeerJSMeeting: React.FC = () => {
               email: user.email 
             }
           });
+          conn.send({ type: 'mic-toggle', micOn });
+          conn.send({ type: 'cam-toggle', camOn });
         });
 
         conn.on('close', () => {
