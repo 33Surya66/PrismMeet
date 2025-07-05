@@ -432,27 +432,30 @@ const PeerJSMeeting: React.FC = () => {
       });
     });
 
+    // Add a Set to track which peers we've already called
+    const calledPeersRef = useRef<Set<string>>(new Set());
+
+    // In socket.on('new-participant') handler, only call if not already called
     socket.on('new-participant', ({ socketId, user: remoteUser }) => {
       console.log('🟢 New participant:', remoteUser);
-      
-      // Validate peer ID and connection status
       if (!remoteUser.peerId) {
         console.log('⚠️ Remote user has no peer ID');
         return;
       }
-      
       if (remoteUser.peerId === peerId) {
         console.log('⚠️ Ignoring own peer ID');
         return;
       }
-      
       if (!peerConnected) {
         console.log('⚠️ PeerJS not connected, storing peer for later call');
         setPendingPeerCalls(prev => [...prev, { peerId: remoteUser.peerId, user: remoteUser }]);
         return;
       }
-      
-      // Add a delay to ensure PeerJS is fully ready
+      if (calledPeersRef.current.has(remoteUser.peerId)) {
+        console.log('⚠️ Already called this peer:', remoteUser.peerId);
+        return;
+      }
+      calledPeersRef.current.add(remoteUser.peerId);
       setTimeout(() => {
         callPeer(remoteUser.peerId, remoteUser);
       }, 1500);
@@ -545,17 +548,18 @@ const PeerJSMeeting: React.FC = () => {
       return;
     }
     
-    console.log('📞 Calling peer:', remotePeerId);
+    console.log('📞 Calling peer:', remotePeerId, 'from', peerId);
     
     try {
       const call = peerRef.current.call(remotePeerId, localStream);
       
       call.on('stream', (remoteStream) => {
-        console.log('📹 Received stream from:', remotePeerId);
+        console.log('📹 Received remote stream from:', remotePeerId, remoteStream);
         setRemoteParticipants(prev => {
           const updated = {
             ...prev,
             [remotePeerId]: {
+              ...prev[remotePeerId],
               stream: remoteStream,
               user: remoteUser,
               camOn: true,
@@ -867,7 +871,7 @@ const PeerJSMeeting: React.FC = () => {
             {Object.entries(remoteParticipants).map(([peerId, { stream, user: remoteUser, camOn, micOn }]) => (
               <div key={peerId} className="flex flex-col items-center w-72 h-80">
                 <span className="text-white text-lg font-semibold mb-2">{remoteUser?.name || remoteUser?.email || 'Participant'}</span>
-                {camOn !== false ? (
+                {stream && camOn !== false ? (
                   <video
                     autoPlay
                     playsInline
@@ -875,16 +879,16 @@ const PeerJSMeeting: React.FC = () => {
                     ref={el => {
                       if (el && stream) {
                         el.srcObject = stream;
-                        console.log('📹 Set video srcObject for peer:', peerId);
+                        console.log('Set video srcObject for peer:', peerId, stream);
                       }
                     }}
                     onLoadedMetadata={() => console.log('📹 Video metadata loaded for peer:', peerId)}
                     onCanPlay={() => console.log('📹 Video can play for peer:', peerId)}
-                    onError={(e) => console.error('❌ Video error for peer:', peerId, e)}
+                    onError={e => console.error('❌ Video error for peer:', peerId, e)}
                   />
                 ) : (
                   <div className="w-72 h-56 rounded-2xl bg-slate-900 flex items-center justify-center border-2 border-blue-400 shadow-lg">
-                    <img src="/logo.png" alt="Camera Off" className="w-24 h-24 opacity-60" />
+                    <span className="text-slate-400 text-center">No video stream received</span>
                   </div>
                 )}
                 <span className="text-slate-300 mt-2 text-base font-semibold">{remoteUser?.name || remoteUser?.email || peerId}</span>
