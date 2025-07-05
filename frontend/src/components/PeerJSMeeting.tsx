@@ -168,6 +168,7 @@ const PeerJSMeeting: React.FC = () => {
   const peerRef = useRef<Peer | null>(null);
   const socketRef = useRef<any>(null);
   const connectionsRef = useRef<{ [peerId: string]: any }>({});
+  const calledPeersRef = useRef<Set<string>>(new Set());
   
   // Generate unique peer ID for this user
   const peerId = useMemo(() => {
@@ -431,9 +432,6 @@ const PeerJSMeeting: React.FC = () => {
         } 
       });
     });
-
-    // Add a Set to track which peers we've already called
-    const calledPeersRef = useRef<Set<string>>(new Set());
 
     // In socket.on('new-participant') handler, only call if not already called
     socket.on('new-participant', ({ socketId, user: remoteUser }) => {
