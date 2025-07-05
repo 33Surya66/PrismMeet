@@ -77,7 +77,7 @@ const Meeting: React.FC = () => {
   const chatEndRef = useRef<HTMLDivElement>(null);
   // WebRTC: remote streams and peer connections
   const [remoteParticipants, setRemoteParticipants] = useState<{ [socketId: string]: { stream: MediaStream, user: any, camOn: boolean, micOn: boolean } }>({});
-  const peersRef = useRef<{ [socketId: string]: RTCPeerConnection }>({});
+  const peersRef = useRef<{ [socketId: string]: RTCPeerConnection & { qualityMonitor?: NodeJS.Timeout } }>({});
   const [remoteScreenShares, setRemoteScreenShares] = useState<{ [socketId: string]: { stream: MediaStream, user: any } }>({});
 
   const user = useUser();
@@ -85,11 +85,58 @@ const Meeting: React.FC = () => {
   const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:4000';
   const SOCKET_URL = API_URL.replace(/^http:/, 'https:');
 
+  // Browser compatibility check
+  const checkWebRTCSupport = () => {
+    const support = {
+      webrtc: typeof RTCPeerConnection !== 'undefined',
+      getUserMedia: !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia),
+      getDisplayMedia: !!(navigator.mediaDevices && navigator.mediaDevices.getDisplayMedia),
+      screenSharing: !!(navigator.mediaDevices && navigator.mediaDevices.getDisplayMedia),
+      webSocket: typeof WebSocket !== 'undefined',
+      socketIO: typeof io !== 'undefined'
+    };
+    
+    console.log('WebRTC Support:', support);
+    return support;
+  };
+
+  const [browserSupport, setBrowserSupport] = useState(checkWebRTCSupport());
+
   const ICE_SERVERS = [
+    // Primary STUN servers
     { urls: 'stun:stun.l.google.com:19302' },
-    // Example public TURN server (for demo/testing only; use your own for production)
-    { urls: 'turn:openrelay.metered.ca:80', username: 'openrelayproject', credential: 'openrelayproject' }
+    { urls: 'stun:stun1.l.google.com:19302' },
+    { urls: 'stun:stun2.l.google.com:19302' },
+    { urls: 'stun:stun3.l.google.com:19302' },
+    { urls: 'stun:stun4.l.google.com:19302' },
+    
+    // Backup STUN servers
+    { urls: 'stun:stun.voiparound.com:3478' },
+    { urls: 'stun:stun.voipbuster.com:3478' },
+    { urls: 'stun:stun.voipstunt.com:3478' },
+    
+    // TURN servers (replace with your own for production)
+    { 
+      urls: 'turn:openrelay.metered.ca:80', 
+      username: 'openrelayproject', 
+      credential: 'openrelayproject' 
+    },
+    { 
+      urls: 'turn:openrelay.metered.ca:443', 
+      username: 'openrelayproject', 
+      credential: 'openrelayproject' 
+    },
+    { 
+      urls: 'turn:openrelay.metered.ca:443?transport=tcp', 
+      username: 'openrelayproject', 
+      credential: 'openrelayproject' 
+    }
   ];
+
+  // Connection state tracking
+  const [connectionStates, setConnectionStates] = useState<{ [socketId: string]: string }>({});
+  const [iceConnectionStates, setIceConnectionStates] = useState<{ [socketId: string]: string }>({});
+  const [connectionQuality, setConnectionQuality] = useState<{ [socketId: string]: 'good' | 'poor' | 'disconnected' }>({});
 
   const generateInstantMeeting = () => {
     fetch(`${API_URL}/api/meetings/instant`, {
@@ -200,9 +247,7 @@ const Meeting: React.FC = () => {
       setScreenSharing(true);
       // Add screen tracks to all peer connections
       Object.values(peersRef.current).forEach(pc => {
-        sStream.getTracks().forEach(track => {
-          pc.addTrack(track, sStream);
-        });
+        sStream.getTracks().forEach(track => pc.addTrack(track, sStream));
       });
       sStream.getVideoTracks()[0].onended = () => {
         // Remove screen tracks from all peer connections
@@ -524,15 +569,60 @@ const Meeting: React.FC = () => {
     if (!socketRef.current || !localStream) return;
     const socket = socketRef.current;
 
-    // Helper: create a new peer connection
+    // Helper: create a new peer connection with enhanced monitoring
     const createPeerConnection = (socketId: string, remoteUser: any, isInitiator: boolean) => {
-      const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
+      const pc = new RTCPeerConnection({ 
+        iceServers: ICE_SERVERS,
+        iceCandidatePoolSize: 10,
+        bundlePolicy: 'max-bundle',
+        rtcpMuxPolicy: 'require'
+      });
+      
+      // Add local tracks
       localStream.getTracks().forEach(track => pc.addTrack(track, localStream));
       if (screenStream && screenSharing) {
         screenStream.getTracks().forEach(track => pc.addTrack(track, screenStream));
       }
+
+      // Enhanced connection monitoring
+      pc.onconnectionstatechange = () => {
+        console.log(`Connection state for ${socketId}:`, pc.connectionState);
+        setConnectionStates(prev => ({ ...prev, [socketId]: pc.connectionState }));
+        
+        if (pc.connectionState === 'disconnected' || pc.connectionState === 'closed') {
+          setRemoteParticipants(prev => {
+            const copy = { ...prev };
+            delete copy[socketId];
+            return copy;
+          });
+          setRemoteScreenShares(prev => {
+            const copy = { ...prev };
+            delete copy[socketId];
+            return copy;
+          });
+          setConnectionQuality(prev => ({ ...prev, [socketId]: 'disconnected' }));
+        } else if (pc.connectionState === 'connected') {
+          setConnectionQuality(prev => ({ ...prev, [socketId]: 'good' }));
+        }
+      };
+
+      pc.oniceconnectionstatechange = () => {
+        console.log(`ICE connection state for ${socketId}:`, pc.iceConnectionState);
+        setIceConnectionStates(prev => ({ ...prev, [socketId]: pc.iceConnectionState }));
+        
+        if (pc.iceConnectionState === 'failed') {
+          console.log(`ICE connection failed for ${socketId}, attempting restart...`);
+          pc.restartIce();
+        }
+      };
+
+      pc.onicegatheringstatechange = () => {
+        console.log(`ICE gathering state for ${socketId}:`, pc.iceGatheringState);
+      };
+
       pc.onicecandidate = (event) => {
         if (event.candidate) {
+          console.log(`Sending ICE candidate to ${socketId}:`, event.candidate.type);
           socket.emit('signal', {
             meetingId: meetingIdParam,
             to: socketId,
@@ -541,9 +631,14 @@ const Meeting: React.FC = () => {
           });
         }
       };
+
       pc.ontrack = (event) => {
+        console.log(`Received track from ${socketId}:`, event.track.kind, event.track.label);
         // Distinguish between camera and screen share
-        const isScreen = event.track.label.toLowerCase().includes('screen') || event.track.label.toLowerCase().includes('display');
+        const isScreen = event.track.label.toLowerCase().includes('screen') || 
+                        event.track.label.toLowerCase().includes('display') ||
+                        event.track.label.toLowerCase().includes('monitor');
+        
         if (isScreen) {
           setRemoteScreenShares(prev => ({ ...prev, [socketId]: { stream: event.streams[0], user: remoteUser } }));
         } else {
@@ -558,20 +653,34 @@ const Meeting: React.FC = () => {
           }));
         }
       };
-      pc.onconnectionstatechange = () => {
-        if (pc.connectionState === 'disconnected' || pc.connectionState === 'closed') {
-          setRemoteParticipants(prev => {
-            const copy = { ...prev };
-            delete copy[socketId];
-            return copy;
-          });
-          setRemoteScreenShares(prev => {
-            const copy = { ...prev };
-            delete copy[socketId];
-            return copy;
+
+      // Monitor connection quality
+      const monitorConnection = () => {
+        if (pc.connectionState === 'connected') {
+          pc.getStats().then(stats => {
+            stats.forEach(report => {
+              if (report.type === 'inbound-rtp' && report.mediaType === 'video') {
+                const packetsLost = report.packetsLost || 0;
+                const packetsReceived = report.packetsReceived || 0;
+                const lossRate = packetsReceived > 0 ? packetsLost / packetsReceived : 0;
+                
+                if (lossRate > 0.1) { // More than 10% packet loss
+                  setConnectionQuality(prev => ({ ...prev, [socketId]: 'poor' }));
+                } else {
+                  setConnectionQuality(prev => ({ ...prev, [socketId]: 'good' }));
+                }
+              }
+            });
           });
         }
       };
+
+      // Monitor connection quality every 5 seconds
+      const qualityInterval = setInterval(monitorConnection, 5000);
+      
+      // Store interval for cleanup
+      (pc as any).qualityMonitor = qualityInterval;
+      
       peersRef.current[socketId] = pc;
       return pc;
     };
@@ -592,33 +701,73 @@ const Meeting: React.FC = () => {
       });
     };
 
-    // Handle signal
+    // Handle signal with enhanced error handling and retry logic
     const handleSignal = async ({ from, data }) => {
       let pc = peersRef.current[from];
       if (!pc) pc = createPeerConnection(from, {}, false);
-      if (data.type === 'offer') {
-        await pc.setRemoteDescription(new RTCSessionDescription(data.sdp));
-        const answer = await pc.createAnswer();
-        await pc.setLocalDescription(answer);
-        socket.emit('signal', {
-          meetingId: meetingIdParam,
-          to: from,
-          from: socket.id,
-          data: { type: 'answer', sdp: answer }
-        });
-      } else if (data.type === 'answer') {
-        await pc.setRemoteDescription(new RTCSessionDescription(data.sdp));
-      } else if (data.type === 'ice-candidate') {
-        try {
-          await pc.addIceCandidate(new RTCIceCandidate(data.candidate));
-        } catch (e) { /* ignore */ }
+      
+      try {
+        if (data.type === 'offer') {
+          console.log(`Processing offer from ${from}`);
+          await pc.setRemoteDescription(new RTCSessionDescription(data.sdp));
+          const answer = await pc.createAnswer();
+          await pc.setLocalDescription(answer);
+          socket.emit('signal', {
+            meetingId: meetingIdParam,
+            to: from,
+            from: socket.id,
+            data: { type: 'answer', sdp: answer }
+          });
+        } else if (data.type === 'answer') {
+          console.log(`Processing answer from ${from}`);
+          await pc.setRemoteDescription(new RTCSessionDescription(data.sdp));
+        } else if (data.type === 'ice-candidate') {
+          console.log(`Processing ICE candidate from ${from}:`, data.candidate.type);
+          try {
+            await pc.addIceCandidate(new RTCIceCandidate(data.candidate));
+          } catch (e) {
+            console.warn(`Failed to add ICE candidate from ${from}:`, e);
+            // Don't throw - ICE candidates can fail and that's normal
+          }
+        }
+      } catch (error) {
+        console.error(`Signal handling error for ${from}:`, error);
+        
+        // Retry logic for critical operations
+        if (data.type === 'offer' || data.type === 'answer') {
+          console.log(`Retrying ${data.type} processing for ${from}...`);
+          setTimeout(async () => {
+            try {
+              if (data.type === 'offer') {
+                await pc.setRemoteDescription(new RTCSessionDescription(data.sdp));
+                const answer = await pc.createAnswer();
+                await pc.setLocalDescription(answer);
+                socket.emit('signal', {
+                  meetingId: meetingIdParam,
+                  to: from,
+                  from: socket.id,
+                  data: { type: 'answer', sdp: answer }
+                });
+              } else if (data.type === 'answer') {
+                await pc.setRemoteDescription(new RTCSessionDescription(data.sdp));
+              }
+            } catch (retryError) {
+              console.error(`Retry failed for ${from}:`, retryError);
+            }
+          }, 1000);
+        }
       }
     };
 
     // Handle participant left
     const handleParticipantLeft = ({ socketId }) => {
       if (peersRef.current[socketId]) {
-        peersRef.current[socketId].close();
+        const pc = peersRef.current[socketId];
+        // Clear quality monitoring interval
+        if (pc.qualityMonitor) {
+          clearInterval(pc.qualityMonitor);
+        }
+        pc.close();
         delete peersRef.current[socketId];
         setRemoteParticipants(prev => {
           const copy = { ...prev };
@@ -626,6 +775,21 @@ const Meeting: React.FC = () => {
           return copy;
         });
         setRemoteScreenShares(prev => {
+          const copy = { ...prev };
+          delete copy[socketId];
+          return copy;
+        });
+        setConnectionStates(prev => {
+          const copy = { ...prev };
+          delete copy[socketId];
+          return copy;
+        });
+        setIceConnectionStates(prev => {
+          const copy = { ...prev };
+          delete copy[socketId];
+          return copy;
+        });
+        setConnectionQuality(prev => {
           const copy = { ...prev };
           delete copy[socketId];
           return copy;
@@ -644,13 +808,50 @@ const Meeting: React.FC = () => {
       socket.off('new-participant', handleNewParticipant);
       socket.off('signal', handleSignal);
       socket.off('participant-left', handleParticipantLeft);
-      // Close all peer connections
-      Object.values(peersRef.current).forEach(pc => pc.close());
+      // Close all peer connections with proper cleanup
+      Object.values(peersRef.current).forEach(pc => {
+        if (pc.qualityMonitor) {
+          clearInterval(pc.qualityMonitor);
+        }
+        pc.close();
+      });
       peersRef.current = {};
       setRemoteParticipants({});
       setRemoteScreenShares({});
+      setConnectionStates({});
+      setIceConnectionStates({});
+      setConnectionQuality({});
     };
   }, [localStream, meetingIdParam, user]);
+
+  // Show browser compatibility warning
+  if (!browserSupport.webrtc || !browserSupport.getUserMedia) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-slate-900 via-blue-900 to-black">
+        <div className="bg-slate-800/90 p-8 rounded-2xl shadow-2xl w-full max-w-md flex flex-col items-center">
+          <h2 className="text-2xl font-bold text-white mb-4">Browser Not Supported</h2>
+          <p className="text-slate-300 mb-4 text-center">
+            Your browser doesn't support WebRTC features required for video calls.
+          </p>
+          <div className="text-slate-400 text-sm mb-4">
+            <p>Supported browsers:</p>
+            <ul className="list-disc list-inside mt-2">
+              <li>Chrome 60+</li>
+              <li>Firefox 55+</li>
+              <li>Safari 11+</li>
+              <li>Edge 79+</li>
+            </ul>
+          </div>
+          <button 
+            onClick={() => window.location.reload()} 
+            className="px-4 py-2 bg-blue-500 text-white rounded-lg"
+          >
+            Try Again
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   if (showJoinModal) {
     return (
@@ -780,6 +981,15 @@ const Meeting: React.FC = () => {
                       <span className="text-slate-300 mt-2 text-base font-semibold">{remoteUser?.name || remoteUser?.email || socketId}</span>
                       <span className={`mt-1 text-xs ${micOn ? 'text-green-400' : 'text-red-400'}`}>{micOn ? 'Mic On' : 'Mic Off'}</span>
                       <span className={`mt-1 text-xs ${camOn ? 'text-green-400' : 'text-red-400'}`}>{camOn ? 'Camera On' : 'Camera Off'}</span>
+                      <span className={`mt-1 text-xs ${
+                        connectionQuality[socketId] === 'good' ? 'text-green-400' : 
+                        connectionQuality[socketId] === 'poor' ? 'text-yellow-400' : 
+                        'text-red-400'
+                      }`}>
+                        {connectionQuality[socketId] === 'good' ? 'Good Connection' : 
+                         connectionQuality[socketId] === 'poor' ? 'Poor Connection' : 
+                         'Disconnected'}
+                      </span>
                     </div>
                   ))}
                   {screenSharing && screenStream && (
