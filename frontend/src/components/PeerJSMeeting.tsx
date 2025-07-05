@@ -56,6 +56,8 @@ const PeerJSMeeting: React.FC = () => {
   const [aiNotes, setAiNotes] = useState('');
   const [isGenerating, setIsGenerating] = useState(false);
   const [activeTab, setActiveTab] = useState<'chat' | 'ideas' | 'notes' | 'minutes'>('chat');
+  const [connectionRetries, setConnectionRetries] = useState(0);
+  const [maxRetries] = useState(3);
   
   const { user, isLoggedIn } = useUser();
   const { id: meetingIdParam } = useParams();
@@ -219,8 +221,8 @@ const PeerJSMeeting: React.FC = () => {
 
     // Initialize PeerJS with better configuration
     const peer = new Peer(peerId, {
-      // Use a more reliable PeerJS server or run your own
-      host: 'peerjs-server.herokuapp.com',
+      // Use a more reliable PeerJS server
+      host: '0.peerjs.com', // More reliable than Heroku server
       port: 443,
       secure: true,
       debug: 3, // Enable debug logging
@@ -230,12 +232,12 @@ const PeerJSMeeting: React.FC = () => {
           { urls: 'stun:stun1.l.google.com:19302' },
           { urls: 'stun:stun2.l.google.com:19302' },
           { urls: 'stun:stun3.l.google.com:19302' },
-          { urls: 'stun:stun4.l.google.com:19302' },
-          // Add TURN servers for better connectivity (optional)
-          // { urls: 'turn:your-turn-server.com:3478', username: 'username', credential: 'password' }
+          { urls: 'stun:stun4.l.google.com:19302' }
         ]
       }
     });
+
+    peerRef.current = peer;
 
     peerRef.current = peer;
 
@@ -254,10 +256,20 @@ const PeerJSMeeting: React.FC = () => {
         console.log('Peer unavailable, will retry connection...');
       } else if (err.type === 'network') {
         console.log('Network error, checking connection...');
+      } else if (err.message && err.message.includes('Lost connection to server')) {
+        console.log('⚠️ Lost connection to PeerJS server, attempting to reconnect...');
+        // Try to reconnect after a delay
+        setTimeout(() => {
+          if (peerRef.current) {
+            try {
+              peerRef.current.reconnect();
+            } catch (reconnectErr) {
+              console.error('❌ Failed to reconnect:', reconnectErr);
+            }
+          }
+        }, 3000);
       } else if (err.message && err.message.includes('ID') && err.message.includes('invalid')) {
         console.log('⚠️ Invalid peer ID detected, this might be due to special characters in email');
-        // The error is likely due to invalid characters in the peer ID
-        // We'll let the reconnection mechanism handle it
       }
     });
 
@@ -269,7 +281,9 @@ const PeerJSMeeting: React.FC = () => {
       // Try to reconnect after a short delay
       setTimeout(() => {
         try {
-          peer.reconnect();
+          if (peerRef.current) {
+            peerRef.current.reconnect();
+          }
         } catch (err) {
           console.error('❌ Failed to reconnect PeerJS:', err);
           setConnectionStatus('error');
@@ -685,6 +699,24 @@ const PeerJSMeeting: React.FC = () => {
                 {connectionStatus === 'connected' ? 'Connected' : 
                  connectionStatus === 'connecting' ? 'Connecting...' : 'Error'}
               </span>
+              {connectionStatus === 'error' && connectionRetries < maxRetries && (
+                <button
+                  onClick={() => {
+                    setConnectionRetries(prev => prev + 1);
+                    setConnectionStatus('connecting');
+                    if (peerRef.current) {
+                      try {
+                        peerRef.current.reconnect();
+                      } catch (err) {
+                        console.error('❌ Manual reconnect failed:', err);
+                      }
+                    }
+                  }}
+                  className="text-xs bg-red-500 hover:bg-red-600 text-white px-2 py-1 rounded"
+                >
+                  Retry
+                </button>
+              )}
             </div>
             <div className="flex items-center gap-2">
               <span className="font-semibold text-slate-300">Participants:</span>
