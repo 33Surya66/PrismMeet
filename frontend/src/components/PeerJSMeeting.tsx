@@ -58,6 +58,7 @@ const PeerJSMeeting: React.FC = () => {
   const [activeTab, setActiveTab] = useState<'chat' | 'ideas' | 'notes' | 'minutes'>('chat');
   const [connectionRetries, setConnectionRetries] = useState(0);
   const [maxRetries] = useState(3);
+  const [pendingPeerCalls, setPendingPeerCalls] = useState<{ peerId: string; user: any }[]>([]);
   
   const { user, isLoggedIn } = useUser();
   const { id: meetingIdParam } = useParams();
@@ -212,6 +213,23 @@ const PeerJSMeeting: React.FC = () => {
     fetchIdeas();
   }, [fetchIdeas]);
 
+  // Retry calling peers when PeerJS connects
+  useEffect(() => {
+    if (peerConnected && peerRef.current && localStream && pendingPeerCalls.length > 0) {
+      console.log('🔄 PeerJS connected, processing pending peer calls:', pendingPeerCalls.length);
+      
+      // Process all pending calls
+      pendingPeerCalls.forEach(({ peerId, user }) => {
+        setTimeout(() => {
+          callPeer(peerId, user);
+        }, 1000);
+      });
+      
+      // Clear pending calls
+      setPendingPeerCalls([]);
+    }
+  }, [peerConnected, localStream, pendingPeerCalls]);
+
   // Initialize PeerJS
   useEffect(() => {
     if (!meetingIdParam || !isLoggedIn || !user?.email) {
@@ -244,6 +262,7 @@ const PeerJSMeeting: React.FC = () => {
     // Handle peer connection events
     peer.on('open', (id) => {
       console.log('🔗 PeerJS connected with ID:', id);
+      console.log('📊 Connection state updated:', { peerConnected: true, connectionStatus: 'connected' });
       setPeerConnected(true);
       setConnectionStatus('connected');
     });
@@ -402,14 +421,28 @@ const PeerJSMeeting: React.FC = () => {
 
     socket.on('new-participant', ({ socketId, user: remoteUser }) => {
       console.log('🟢 New participant:', remoteUser);
-      if (remoteUser.peerId && remoteUser.peerId !== peerId && peerConnected) {
-        // Add a small delay to ensure PeerJS is ready
-        setTimeout(() => {
-          callPeer(remoteUser.peerId, remoteUser);
-        }, 1000);
-      } else {
-        console.log('⚠️ Cannot call peer - PeerJS not connected or invalid peer ID');
+      
+      // Validate peer ID and connection status
+      if (!remoteUser.peerId) {
+        console.log('⚠️ Remote user has no peer ID');
+        return;
       }
+      
+      if (remoteUser.peerId === peerId) {
+        console.log('⚠️ Ignoring own peer ID');
+        return;
+      }
+      
+      if (!peerConnected) {
+        console.log('⚠️ PeerJS not connected, storing peer for later call');
+        setPendingPeerCalls(prev => [...prev, { peerId: remoteUser.peerId, user: remoteUser }]);
+        return;
+      }
+      
+      // Add a delay to ensure PeerJS is fully ready
+      setTimeout(() => {
+        callPeer(remoteUser.peerId, remoteUser);
+      }, 1500);
     });
 
     socket.on('participant-left', ({ socketId }) => {
@@ -464,13 +497,38 @@ const PeerJSMeeting: React.FC = () => {
 
   // Call a peer
   const callPeer = (remotePeerId: string, remoteUser: any) => {
-    if (!peerRef.current || !localStream) {
-      console.log('⚠️ Cannot call peer - missing peer or local stream');
+    console.log('📞 Attempting to call peer:', remotePeerId);
+    console.log('📊 Current state:', {
+      peerRef: !!peerRef.current,
+      localStream: !!localStream,
+      peerConnected,
+      remotePeerId,
+      remoteUser
+    });
+    
+    // Validate all requirements
+    if (!peerRef.current) {
+      console.log('⚠️ Cannot call peer - PeerJS instance not available');
+      return;
+    }
+    
+    if (!localStream) {
+      console.log('⚠️ Cannot call peer - Local stream not available');
       return;
     }
     
     if (!peerConnected) {
       console.log('⚠️ Cannot call peer - PeerJS not connected');
+      return;
+    }
+    
+    if (!remotePeerId || typeof remotePeerId !== 'string') {
+      console.log('⚠️ Cannot call peer - Invalid remote peer ID:', remotePeerId);
+      return;
+    }
+    
+    if (remotePeerId === peerId) {
+      console.log('⚠️ Cannot call peer - Attempting to call self');
       return;
     }
     
@@ -763,6 +821,10 @@ const PeerJSMeeting: React.FC = () => {
                 <span className={localStream ? 'text-green-400' : 'text-red-400'}>
                   {localStream ? 'Active' : 'Inactive'}
                 </span>
+              </div>
+              <div>
+                <span className="text-slate-300">Pending Calls: </span>
+                <span className="text-slate-200">{pendingPeerCalls.length}</span>
               </div>
             </div>
           </div>
