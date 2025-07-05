@@ -1,5 +1,5 @@
-import React, { useRef, useState, useEffect, useMemo } from "react";
-import { LogOut, XCircle, Settings, Mic, MicOff, Video as VideoIcon, VideoOff, Monitor } from 'lucide-react';
+import React, { useRef, useState, useEffect, useMemo, useCallback } from "react";
+import { LogOut, XCircle, Settings, Mic, MicOff, Video as VideoIcon, VideoOff, Monitor, Lightbulb, FileText, Brain, StickyNote, Users, Clock } from 'lucide-react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { io } from 'socket.io-client';
 import { useUser } from '@/context/UserContext';
@@ -45,6 +45,17 @@ const PeerJSMeeting: React.FC = () => {
   const [remoteScreenShares, setRemoteScreenShares] = useState<{ [peerId: string]: { stream: MediaStream, user: any } }>({});
   const [peerConnected, setPeerConnected] = useState(false);
   const [connectionStatus, setConnectionStatus] = useState<'connecting' | 'connected' | 'error'>('connecting');
+  const [allPeerIds, setAllPeerIds] = useState<string[]>([]);
+  const [participantCount, setParticipantCount] = useState(1);
+  
+  // AI Notes and Meeting Features
+  const [ideas, setIdeas] = useState<{ id: number; user_id: number; username: string; idea: string; created_at: string }[]>([]);
+  const [newIdea, setNewIdea] = useState('');
+  const [structuredDoc, setStructuredDoc] = useState('');
+  const [minutes, setMinutes] = useState('');
+  const [aiNotes, setAiNotes] = useState('');
+  const [isGenerating, setIsGenerating] = useState(false);
+  const [activeTab, setActiveTab] = useState<'chat' | 'ideas' | 'notes' | 'minutes'>('chat');
   
   const { user, isLoggedIn } = useUser();
   const { id: meetingIdParam } = useParams();
@@ -52,6 +63,103 @@ const PeerJSMeeting: React.FC = () => {
   
   const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:4000';
   const SOCKET_URL = API_URL.replace(/^http:/, 'https:');
+
+  // API functions for meeting features
+  const fetchIdeas = useCallback(async () => {
+    if (!meetingIdParam || !isLoggedIn) return;
+    const token = localStorage.getItem('token');
+    try {
+      const res = await fetch(`${API_URL}/api/docs/${meetingIdParam}/ideas`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setIdeas(data);
+      }
+    } catch (error) {
+      console.error('Error fetching ideas:', error);
+    }
+  }, [meetingIdParam, isLoggedIn, API_URL]);
+
+  const addIdea = async (ideaText: string) => {
+    if (!meetingIdParam || !isLoggedIn || !ideaText.trim()) return;
+    const token = localStorage.getItem('token');
+    try {
+      const res = await fetch(`${API_URL}/api/docs/${meetingIdParam}/ideas`, {
+        method: 'POST',
+        headers: { 
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}` 
+        },
+        body: JSON.stringify({ idea: ideaText })
+      });
+      if (res.ok) {
+        setNewIdea('');
+        fetchIdeas();
+      }
+    } catch (error) {
+      console.error('Error adding idea:', error);
+    }
+  };
+
+  const generateStructuredDoc = async () => {
+    if (!meetingIdParam || !isLoggedIn) return;
+    const token = localStorage.getItem('token');
+    setIsGenerating(true);
+    try {
+      const res = await fetch(`${API_URL}/api/docs/${meetingIdParam}/structure`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setStructuredDoc(data.structured_doc);
+      }
+    } catch (error) {
+      console.error('Error generating structured doc:', error);
+    } finally {
+      setIsGenerating(false);
+    }
+  };
+
+  const generateMinutes = async () => {
+    if (!meetingIdParam || !isLoggedIn) return;
+    const token = localStorage.getItem('token');
+    setIsGenerating(true);
+    try {
+      const res = await fetch(`${API_URL}/api/docs/${meetingIdParam}/minutes`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setMinutes(data.minutes);
+      }
+    } catch (error) {
+      console.error('Error generating minutes:', error);
+    } finally {
+      setIsGenerating(false);
+    }
+  };
+
+  const saveAiNotes = async () => {
+    if (!meetingIdParam || !aiNotes.trim()) return;
+    try {
+      const res = await fetch(`${API_URL}/api/ai/${meetingIdParam}/notes`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 
+          notes: aiNotes, 
+          speaker: user.name || user.email || 'Anonymous' 
+        })
+      });
+      if (res.ok) {
+        console.log('AI notes saved successfully');
+      }
+    } catch (error) {
+      console.error('Error saving AI notes:', error);
+    }
+  };
   
   // PeerJS instance
   const peerRef = useRef<Peer | null>(null);
@@ -60,8 +168,47 @@ const PeerJSMeeting: React.FC = () => {
   
   // Generate unique peer ID for this user
   const peerId = useMemo(() => {
-    return `${user?.email || 'anonymous'}-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+    // Create a valid peer ID with only alphanumeric characters and hyphens
+    const email = user?.email || 'anonymous';
+    const timestamp = Date.now();
+    const random = Math.random().toString(36).substr(2, 9);
+    
+    // Clean the email to remove special characters that might cause issues
+    // Only keep letters, numbers, and hyphens, replace @ and . with hyphens
+    const cleanEmail = email
+      .replace(/[^a-zA-Z0-9]/g, '') // Remove all special characters
+      .toLowerCase(); // Convert to lowercase for consistency
+    
+    // Ensure the peer ID is not too long (PeerJS has limits)
+    const maxLength = 50;
+    const baseId = `${cleanEmail}-${timestamp}-${random}`;
+    
+    if (baseId.length > maxLength) {
+      // Truncate if too long, but keep the timestamp and random part
+      const truncatedEmail = cleanEmail.substring(0, maxLength - 20); // Leave room for timestamp and random
+      return `${truncatedEmail}-${timestamp}-${random}`;
+    }
+    
+    return baseId;
   }, [user?.email]);
+
+  // Update participant count and peer IDs
+  const updateParticipantInfo = useCallback(() => {
+    const peerIds = [peerId, ...Object.keys(remoteParticipants)];
+    setAllPeerIds(peerIds);
+    setParticipantCount(peerIds.length);
+    console.log('📊 Updated participant info:', { count: peerIds.length, peerIds });
+  }, [peerId, remoteParticipants]);
+
+  // Update participant info whenever remoteParticipants changes
+  useEffect(() => {
+    updateParticipantInfo();
+  }, [updateParticipantInfo]);
+
+  // Fetch ideas when component mounts
+  useEffect(() => {
+    fetchIdeas();
+  }, [fetchIdeas]);
 
   // Initialize PeerJS
   useEffect(() => {
@@ -102,10 +249,15 @@ const PeerJSMeeting: React.FC = () => {
     peer.on('error', (err) => {
       console.error('❌ PeerJS error:', err);
       setConnectionStatus('error');
+      
       if (err.type === 'peer-unavailable') {
         console.log('Peer unavailable, will retry connection...');
       } else if (err.type === 'network') {
         console.log('Network error, checking connection...');
+      } else if (err.message && err.message.includes('ID') && err.message.includes('invalid')) {
+        console.log('⚠️ Invalid peer ID detected, this might be due to special characters in email');
+        // The error is likely due to invalid characters in the peer ID
+        // We'll let the reconnection mechanism handle it
       }
     });
 
@@ -113,7 +265,16 @@ const PeerJSMeeting: React.FC = () => {
       console.log('🔌 PeerJS disconnected, attempting to reconnect...');
       setPeerConnected(false);
       setConnectionStatus('connecting');
-      peer.reconnect();
+      
+      // Try to reconnect after a short delay
+      setTimeout(() => {
+        try {
+          peer.reconnect();
+        } catch (err) {
+          console.error('❌ Failed to reconnect PeerJS:', err);
+          setConnectionStatus('error');
+        }
+      }, 2000);
     });
 
     // Handle incoming calls
@@ -126,15 +287,19 @@ const PeerJSMeeting: React.FC = () => {
         
         call.on('stream', (remoteStream) => {
           console.log('📹 Received remote stream from:', call.peer);
-          setRemoteParticipants(prev => ({
-            ...prev,
-            [call.peer]: {
-              stream: remoteStream,
-              user: { name: 'Remote User', email: call.peer },
-              camOn: true,
-              micOn: true
-            }
-          }));
+          setRemoteParticipants(prev => {
+            const updated = {
+              ...prev,
+              [call.peer]: {
+                stream: remoteStream,
+                user: { name: 'Remote User', email: call.peer },
+                camOn: true,
+                micOn: true
+              }
+            };
+            console.log('📊 Updated remote participants (incoming):', Object.keys(updated));
+            return updated;
+          });
         });
 
         call.on('close', () => {
@@ -223,11 +388,13 @@ const PeerJSMeeting: React.FC = () => {
 
     socket.on('new-participant', ({ socketId, user: remoteUser }) => {
       console.log('🟢 New participant:', remoteUser);
-      if (remoteUser.peerId && remoteUser.peerId !== peerId) {
+      if (remoteUser.peerId && remoteUser.peerId !== peerId && peerConnected) {
         // Add a small delay to ensure PeerJS is ready
         setTimeout(() => {
           callPeer(remoteUser.peerId, remoteUser);
         }, 1000);
+      } else {
+        console.log('⚠️ Cannot call peer - PeerJS not connected or invalid peer ID');
       }
     });
 
@@ -288,6 +455,11 @@ const PeerJSMeeting: React.FC = () => {
       return;
     }
     
+    if (!peerConnected) {
+      console.log('⚠️ Cannot call peer - PeerJS not connected');
+      return;
+    }
+    
     console.log('📞 Calling peer:', remotePeerId);
     
     try {
@@ -295,15 +467,19 @@ const PeerJSMeeting: React.FC = () => {
       
       call.on('stream', (remoteStream) => {
         console.log('📹 Received stream from:', remotePeerId);
-        setRemoteParticipants(prev => ({
-          ...prev,
-          [remotePeerId]: {
-            stream: remoteStream,
-            user: remoteUser,
-            camOn: true,
-            micOn: true
-          }
-        }));
+        setRemoteParticipants(prev => {
+          const updated = {
+            ...prev,
+            [remotePeerId]: {
+              stream: remoteStream,
+              user: remoteUser,
+              camOn: true,
+              micOn: true
+            }
+          };
+          console.log('📊 Updated remote participants:', Object.keys(updated));
+          return updated;
+        });
       });
 
       call.on('close', () => {
@@ -513,8 +689,49 @@ const PeerJSMeeting: React.FC = () => {
             <div className="flex items-center gap-2">
               <span className="font-semibold text-slate-300">Participants:</span>
               <span className="text-sm text-slate-200">
-                {Object.keys(remoteParticipants).length + 1}
+                {participantCount}
               </span>
+            </div>
+          </div>
+          
+          {/* Peer IDs Display */}
+          {allPeerIds.length > 0 && (
+            <div className="w-full max-w-2xl bg-slate-700/60 rounded-xl shadow p-4 mb-4">
+              <div className="text-slate-200 text-sm font-semibold mb-2">All Peer IDs:</div>
+              <div className="flex flex-wrap gap-2">
+                {allPeerIds.map((id, index) => (
+                  <div key={id} className="bg-slate-600 px-2 py-1 rounded text-xs font-mono text-slate-200">
+                    {index === 0 ? 'You' : `Peer ${index}`}: {id}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+          
+          {/* Connection Debug Info */}
+          <div className="w-full max-w-2xl bg-slate-700/60 rounded-xl shadow p-4 mb-4">
+            <div className="text-slate-200 text-sm font-semibold mb-2">Connection Status:</div>
+            <div className="grid grid-cols-2 gap-4 text-xs">
+              <div>
+                <span className="text-slate-300">PeerJS Status: </span>
+                <span className={connectionStatus === 'connected' ? 'text-green-400' : connectionStatus === 'connecting' ? 'text-yellow-400' : 'text-red-400'}>
+                  {connectionStatus}
+                </span>
+              </div>
+              <div>
+                <span className="text-slate-300">Active Connections: </span>
+                <span className="text-slate-200">{Object.keys(connectionsRef.current).length}</span>
+              </div>
+              <div>
+                <span className="text-slate-300">Remote Participants: </span>
+                <span className="text-slate-200">{Object.keys(remoteParticipants).length}</span>
+              </div>
+              <div>
+                <span className="text-slate-300">Local Stream: </span>
+                <span className={localStream ? 'text-green-400' : 'text-red-400'}>
+                  {localStream ? 'Active' : 'Inactive'}
+                </span>
+              </div>
             </div>
           </div>
         </div>
@@ -547,8 +764,14 @@ const PeerJSMeeting: React.FC = () => {
                     playsInline
                     className="w-72 h-56 rounded-2xl bg-slate-900 object-cover border-2 border-blue-400 shadow-lg"
                     ref={el => {
-                      if (el && stream) el.srcObject = stream;
+                      if (el && stream) {
+                        el.srcObject = stream;
+                        console.log('📹 Set video srcObject for peer:', peerId);
+                      }
                     }}
+                    onLoadedMetadata={() => console.log('📹 Video metadata loaded for peer:', peerId)}
+                    onCanPlay={() => console.log('📹 Video can play for peer:', peerId)}
+                    onError={(e) => console.error('❌ Video error for peer:', peerId, e)}
                   />
                 ) : (
                   <div className="w-72 h-56 rounded-2xl bg-slate-900 flex items-center justify-center border-2 border-blue-400 shadow-lg">
@@ -558,6 +781,7 @@ const PeerJSMeeting: React.FC = () => {
                 <span className="text-slate-300 mt-2 text-base font-semibold">{remoteUser?.name || remoteUser?.email || peerId}</span>
                 <span className={`mt-1 text-xs ${micOn ? 'text-green-400' : 'text-red-400'}`}>{micOn ? 'Mic On' : 'Mic Off'}</span>
                 <span className={`mt-1 text-xs ${camOn ? 'text-green-400' : 'text-red-400'}`}>{camOn ? 'Camera On' : 'Camera Off'}</span>
+                <span className="text-slate-400 text-xs">Peer ID: {peerId.substring(0, 20)}...</span>
               </div>
             ))}
 
@@ -618,36 +842,218 @@ const PeerJSMeeting: React.FC = () => {
           </button>
         </div>
 
-        {/* Chat Section */}
-        <div className="w-full max-w-md mx-auto p-6">
+        {/* Collaborative Features Section */}
+        <div className="w-full max-w-4xl mx-auto p-6">
           <div className="bg-slate-800 rounded-2xl shadow-xl flex flex-col">
-            <div className="p-4 border-b border-slate-700 text-white font-bold text-lg">Chat</div>
-            <div className="flex-1 overflow-y-auto p-4 space-y-2" style={{ maxHeight: '200px' }}>
-              {chatMessages.length > 0 ? (
-                chatMessages.map((msg, i) => {
-                  const isMe = msg.user === (user.name || user.email);
-                  return (
-                    <div key={i} className={`flex ${isMe ? 'justify-end' : 'justify-start'}`}>
-                      <div className={`max-w-[70%] px-4 py-2 rounded-lg ${isMe ? 'bg-blue-500 text-white' : 'bg-slate-700 text-white'}`}>
-                        <div className="text-xs font-semibold text-blue-300 mb-1">{msg.user}</div>
-                        <div>{msg.text}</div>
+            {/* Tab Navigation */}
+            <div className="flex border-b border-slate-700">
+              <button
+                onClick={() => setActiveTab('chat')}
+                className={`flex-1 px-4 py-3 text-sm font-medium transition-colors ${
+                  activeTab === 'chat' 
+                    ? 'text-blue-400 border-b-2 border-blue-400 bg-slate-700/50' 
+                    : 'text-slate-400 hover:text-white'
+                }`}
+              >
+                <div className="flex items-center justify-center gap-2">
+                  <Users className="w-4 h-4" />
+                  Chat
+                </div>
+              </button>
+              <button
+                onClick={() => setActiveTab('ideas')}
+                className={`flex-1 px-4 py-3 text-sm font-medium transition-colors ${
+                  activeTab === 'ideas' 
+                    ? 'text-blue-400 border-b-2 border-blue-400 bg-slate-700/50' 
+                    : 'text-slate-400 hover:text-white'
+                }`}
+              >
+                <div className="flex items-center justify-center gap-2">
+                  <Lightbulb className="w-4 h-4" />
+                  Ideas
+                </div>
+              </button>
+              <button
+                onClick={() => setActiveTab('notes')}
+                className={`flex-1 px-4 py-3 text-sm font-medium transition-colors ${
+                  activeTab === 'notes' 
+                    ? 'text-blue-400 border-b-2 border-blue-400 bg-slate-700/50' 
+                    : 'text-slate-400 hover:text-white'
+                }`}
+              >
+                <div className="flex items-center justify-center gap-2">
+                  <StickyNote className="w-4 h-4" />
+                  AI Notes
+                </div>
+              </button>
+              <button
+                onClick={() => setActiveTab('minutes')}
+                className={`flex-1 px-4 py-3 text-sm font-medium transition-colors ${
+                  activeTab === 'minutes' 
+                    ? 'text-blue-400 border-b-2 border-blue-400 bg-slate-700/50' 
+                    : 'text-slate-400 hover:text-white'
+                }`}
+              >
+                <div className="flex items-center justify-center gap-2">
+                  <FileText className="w-4 h-4" />
+                  Minutes
+                </div>
+              </button>
+            </div>
+
+            {/* Tab Content */}
+            <div className="flex-1 p-4" style={{ minHeight: '300px' }}>
+              {/* Chat Tab */}
+              {activeTab === 'chat' && (
+                <div className="flex flex-col h-full">
+                  <div className="flex-1 overflow-y-auto space-y-2 mb-4" style={{ maxHeight: '200px' }}>
+                    {chatMessages.length > 0 ? (
+                      chatMessages.map((msg, i) => {
+                        const isMe = msg.user === (user.name || user.email);
+                        return (
+                          <div key={i} className={`flex ${isMe ? 'justify-end' : 'justify-start'}`}>
+                            <div className={`max-w-[70%] px-4 py-2 rounded-lg ${isMe ? 'bg-blue-500 text-white' : 'bg-slate-700 text-white'}`}>
+                              <div className="text-xs font-semibold text-blue-300 mb-1">{msg.user}</div>
+                              <div>{msg.text}</div>
+                            </div>
+                          </div>
+                        );
+                      })
+                    ) : (
+                      <div className="text-slate-400 text-center">No messages yet. Start the conversation!</div>
+                    )}
+                  </div>
+                  <form onSubmit={sendChat} className="flex gap-2">
+                    <input
+                      className="flex-1 rounded bg-slate-700 text-white px-3 py-2 outline-none"
+                      placeholder="Type a message..."
+                      value={chatInput}
+                      onChange={e => setChatInput(e.target.value)}
+                    />
+                    <button type="submit" className="bg-blue-500 text-white px-4 py-2 rounded">Send</button>
+                  </form>
+                </div>
+              )}
+
+              {/* Ideas Tab */}
+              {activeTab === 'ideas' && (
+                <div className="flex flex-col h-full">
+                  <div className="flex gap-2 mb-4">
+                    <input
+                      className="flex-1 rounded bg-slate-700 text-white px-3 py-2 outline-none"
+                      placeholder="Share your idea..."
+                      value={newIdea}
+                      onChange={e => setNewIdea(e.target.value)}
+                      onKeyPress={e => e.key === 'Enter' && addIdea(newIdea)}
+                    />
+                    <button 
+                      onClick={() => addIdea(newIdea)}
+                      className="bg-green-500 text-white px-4 py-2 rounded hover:bg-green-600"
+                    >
+                      Add Idea
+                    </button>
+                  </div>
+                  
+                  {/* Ideas Display */}
+                  <div className="flex-1 overflow-y-auto mb-4">
+                    {ideas.length > 0 ? (
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                        {ideas.map((idea, index) => (
+                          <div key={index} className="bg-slate-700 rounded-lg p-3 border border-slate-600">
+                            <div className="text-xs text-slate-400 mb-1">{idea.username}</div>
+                            <div className="text-white">{idea.idea}</div>
+                            <div className="text-xs text-slate-500 mt-2">
+                              {new Date(idea.created_at).toLocaleTimeString()}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <div className="text-slate-400 text-center">No ideas yet. Be the first to share!</div>
+                    )}
+                  </div>
+
+                  {/* AI Structuring */}
+                  <div className="border-t border-slate-700 pt-4">
+                    <button
+                      onClick={generateStructuredDoc}
+                      disabled={isGenerating || ideas.length === 0}
+                      className="w-full bg-gradient-to-r from-purple-500 to-pink-500 text-white px-4 py-2 rounded-lg font-medium hover:from-purple-600 hover:to-pink-600 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                    >
+                      <Brain className="w-4 h-4" />
+                      {isGenerating ? 'Generating...' : 'Structure Ideas with AI'}
+                    </button>
+                  </div>
+
+                  {/* Structured Document Display */}
+                  {structuredDoc && (
+                    <div className="mt-4 p-4 bg-slate-700 rounded-lg">
+                      <h4 className="text-white font-semibold mb-2">AI-Structured Document:</h4>
+                      <div className="text-slate-300 text-sm whitespace-pre-wrap">{structuredDoc}</div>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* AI Notes Tab */}
+              {activeTab === 'notes' && (
+                <div className="flex flex-col h-full">
+                  <div className="flex-1 mb-4">
+                    <textarea
+                      className="w-full h-full bg-slate-700 text-white p-3 rounded-lg outline-none resize-none"
+                      placeholder="Take AI-powered notes during the meeting..."
+                      value={aiNotes}
+                      onChange={e => setAiNotes(e.target.value)}
+                    />
+                  </div>
+                  <div className="flex gap-2">
+                    <button
+                      onClick={saveAiNotes}
+                      className="flex-1 bg-blue-500 text-white px-4 py-2 rounded hover:bg-blue-600"
+                    >
+                      Save Notes
+                    </button>
+                    <button
+                      onClick={() => setAiNotes('')}
+                      className="bg-slate-600 text-white px-4 py-2 rounded hover:bg-slate-700"
+                    >
+                      Clear
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* Minutes Tab */}
+              {activeTab === 'minutes' && (
+                <div className="flex flex-col h-full">
+                  <div className="flex gap-2 mb-4">
+                    <button
+                      onClick={generateMinutes}
+                      disabled={isGenerating || ideas.length === 0}
+                      className="flex-1 bg-gradient-to-r from-green-500 to-teal-500 text-white px-4 py-2 rounded-lg font-medium hover:from-green-600 hover:to-teal-600 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                    >
+                      <Brain className="w-4 h-4" />
+                      {isGenerating ? 'Generating...' : 'Generate Minutes of Meeting'}
+                    </button>
+                  </div>
+                  
+                  {minutes && (
+                    <div className="flex-1 overflow-y-auto">
+                      <div className="bg-slate-700 rounded-lg p-4">
+                        <h4 className="text-white font-semibold mb-2">Minutes of Meeting:</h4>
+                        <div className="text-slate-300 text-sm whitespace-pre-wrap">{minutes}</div>
                       </div>
                     </div>
-                  );
-                })
-              ) : (
-                <div className="text-slate-400 text-center">No messages yet. Start the conversation!</div>
+                  )}
+                  
+                  {!minutes && !isGenerating && (
+                    <div className="text-slate-400 text-center">
+                      Generate minutes based on meeting ideas and discussions
+                    </div>
+                  )}
+                </div>
               )}
             </div>
-            <form onSubmit={sendChat} className="p-4 border-t border-slate-700 flex gap-2">
-              <input
-                className="flex-1 rounded bg-slate-700 text-white px-3 py-2 outline-none"
-                placeholder="Type a message..."
-                value={chatInput}
-                onChange={e => setChatInput(e.target.value)}
-              />
-              <button type="submit" className="bg-blue-500 text-white px-4 py-2 rounded">Send</button>
-            </form>
           </div>
         </div>
       </div>
