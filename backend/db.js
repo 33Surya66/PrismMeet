@@ -14,6 +14,7 @@ const userTable = `CREATE TABLE IF NOT EXISTS users (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   email TEXT UNIQUE NOT NULL,
   password TEXT NOT NULL,
+  name TEXT,
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );`;
 
@@ -92,6 +93,31 @@ db.serialize(() => {
   db.run(chatMessagesTable);
   db.run(meetingDocumentsTable);
   db.run(meetingIdeasTable);
+  
+  // Migration: Add name column to existing users table if it doesn't exist
+  db.run("PRAGMA table_info(users)", (err, rows) => {
+    if (!err) {
+      const hasNameColumn = rows.some(row => row.name === 'name');
+      if (!hasNameColumn) {
+        console.log('Adding name column to users table...');
+        db.run("ALTER TABLE users ADD COLUMN name TEXT", (err) => {
+          if (err) {
+            console.error('Error adding name column:', err);
+          } else {
+            console.log('Successfully added name column to users table');
+            // Update existing users to use email as name
+            db.run("UPDATE users SET name = email WHERE name IS NULL", (err) => {
+              if (err) {
+                console.error('Error updating existing users:', err);
+              } else {
+                console.log('Updated existing users with email as name');
+              }
+            });
+          }
+        });
+      }
+    }
+  });
 });
 
 module.exports = db; 

@@ -1,13 +1,16 @@
 import React, { useState } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
+import { useUser } from '@/context/UserContext';
 
 const Login: React.FC = () => {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [name, setName] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const navigate = useNavigate();
   const location = useLocation();
+  const { setUser } = useUser();
   const params = new URLSearchParams(location.search);
   const redirect = params.get('redirect') || '/';
 
@@ -32,10 +35,19 @@ const Login: React.FC = () => {
       const data = await res.json();
       if (data.token) {
         let userObj = data.user || {};
-        if (!userObj.name && userObj.email) userObj.name = userObj.email;
+        // Use provided name or email as fallback
+        if (!userObj.name) {
+          userObj.name = name || userObj.email || 'Anonymous';
+        }
+        
+        // Save to localStorage and update context
         localStorage.setItem('token', data.token);
         localStorage.setItem('user', JSON.stringify(userObj));
-        console.log('Saved user to localStorage:', userObj);
+        
+        // Update global user context
+        setUser(userObj);
+        
+        console.log('User logged in successfully:', userObj);
         window.location.href = redirect;
       } else {
         setError('Login failed: Invalid response from server');
@@ -51,6 +63,13 @@ const Login: React.FC = () => {
       <form onSubmit={handleSubmit} className="bg-slate-800/90 p-8 rounded-2xl shadow-2xl w-full max-w-md flex flex-col gap-6">
         <h2 className="text-3xl font-bold text-white mb-2 text-center">Login</h2>
         {error && <div className="text-red-400 text-center">{error}</div>}
+        <input
+          type="text"
+          placeholder="Display Name (optional)"
+          className="px-4 py-3 rounded-lg bg-slate-900 text-white border border-slate-600 focus:outline-none focus:ring-2 focus:ring-blue-400"
+          value={name}
+          onChange={e => setName(e.target.value)}
+        />
         <input
           type="email"
           placeholder="Email"

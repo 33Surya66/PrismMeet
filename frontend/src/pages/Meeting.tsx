@@ -80,7 +80,7 @@ const Meeting: React.FC = () => {
   const peersRef = useRef<{ [socketId: string]: RTCPeerConnection & { qualityMonitor?: NodeJS.Timeout } }>({});
   const [remoteScreenShares, setRemoteScreenShares] = useState<{ [socketId: string]: { stream: MediaStream, user: any } }>({});
 
-  const user = useUser();
+  const { user, isLoggedIn, clearUser } = useUser();
 
   const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:4000';
   const SOCKET_URL = API_URL.replace(/^http:/, 'https:');
@@ -409,22 +409,41 @@ const Meeting: React.FC = () => {
 
   // Connect to socket.io and join meeting room
   useEffect(() => {
-    if (!meetingIdParam || !user) {
-      console.warn('No meetingIdParam or user:', { meetingIdParam, user });
+    if (!meetingIdParam || !isLoggedIn || !user?.email) {
+      console.warn('Cannot join meeting - missing requirements:', { 
+        meetingIdParam, 
+        isLoggedIn, 
+        userEmail: user?.email 
+      });
       return;
     }
     if (socketRef.current) return;
+    
     const socket = io(SOCKET_URL, { transports: ['websocket', 'polling'] });
     socketRef.current = socket;
     let initialMessages: any[] = [];
-    console.log('Joining meeting:', { meetingId: meetingIdParam, user });
+    
+    console.log('Joining meeting:', { 
+      meetingId: meetingIdParam, 
+      user: { name: user.name, email: user.email } 
+    });
+    
     socket.on('connect', () => {
       console.log('Socket connected:', socket.id);
+      // Join meeting with complete user info
+      socket.emit('join-meeting', { 
+        meetingId: meetingIdParam, 
+        user: { 
+          name: user.name || user.email || 'Anonymous',
+          email: user.email,
+          id: user.id 
+        } 
+      });
     });
+    
     socket.on('disconnect', () => {
       console.log('Socket disconnected');
     });
-    socket.emit('join-meeting', { meetingId: meetingIdParam, user });
 
     const handleMessage = (msg: any) => {
       console.log('Received chat-message:', msg);
@@ -465,15 +484,27 @@ const Meeting: React.FC = () => {
   // Chat send handler
   const sendChat = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!localStorage.getItem('token')) {
+    if (!isLoggedIn || !user?.email) {
       alert('You must be logged in to send a message.');
       return;
     }
     if (!chatInput.trim() || !socketRef.current) return;
-    console.log('Sending chat-message:', { meetingId: meetingIdParam, user, text: chatInput });
+    
+    const userInfo = {
+      name: user.name || user.email || 'Anonymous',
+      email: user.email,
+      id: user.id
+    };
+    
+    console.log('Sending chat-message:', { 
+      meetingId: meetingIdParam, 
+      user: userInfo, 
+      text: chatInput 
+    });
+    
     socketRef.current.emit('chat-message', {
       meetingId: meetingIdParam,
-      user: { name: user.name || user.email || 'Anonymous', email: user.email || '' },
+      user: userInfo,
       text: chatInput
     });
     setChatInput('');
@@ -802,7 +833,14 @@ const Meeting: React.FC = () => {
     socket.on('participant-left', handleParticipantLeft);
 
     // On mount, announce self to others (for late joiners)
-    socket.emit('join-meeting', { meetingId: meetingIdParam, user });
+    socket.emit('join-meeting', { 
+      meetingId: meetingIdParam, 
+      user: { 
+        name: user.name || user.email || 'Anonymous',
+        email: user.email,
+        id: user.id 
+      } 
+    });
 
     return () => {
       socket.off('new-participant', handleNewParticipant);
@@ -907,7 +945,6 @@ const Meeting: React.FC = () => {
     if (meetingDetails) {
       return (
         <div className="min-h-screen bg-gradient-to-br from-slate-900 via-blue-900 to-black flex flex-row items-start justify-center py-12 px-4 mt-20">
-          {joinGenerateUI}
           {/* Main meeting content (left) */}
           <div className="flex-1 flex flex-col items-center justify-center">
             <h1 className="text-white text-4xl md:text-5xl font-bold mb-6 tracking-wide text-center drop-shadow-lg">{meetingDetails.title || 'PrismMeet - Meeting Room'}</h1>
@@ -1046,7 +1083,20 @@ const Meeting: React.FC = () => {
                   <Monitor className="w-6 h-6" />
                 </button>
                 {/* Disconnect/Leave */}
-                <button onClick={() => {/* leave logic */}} className="p-3 rounded-full bg-slate-700 hover:bg-red-500 text-white transition-colors" title="Leave Meeting">
+                <button onClick={() => {
+                  if (socketRef.current) {
+                    socketRef.current.disconnect();
+                  }
+                  // Close all peer connections
+                  Object.values(peersRef.current).forEach(pc => {
+                    if (pc.qualityMonitor) {
+                      clearInterval(pc.qualityMonitor);
+                    }
+                    pc.close();
+                  });
+                  peersRef.current = {};
+                  navigate('/');
+                }} className="p-3 rounded-full bg-slate-700 hover:bg-red-500 text-white transition-colors" title="Leave Meeting">
                   <LogOut className="w-6 h-6" />
                 </button>
                 {/* End Meeting (host only) */}
@@ -1258,10 +1308,9 @@ const Meeting: React.FC = () => {
     }
   }
 
-  return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-900 via-blue-900 to-black flex flex-col items-center justify-center py-12 px-4">
-      {joinGenerateUI}
-      <div className="bg-slate-800/90 rounded-3xl shadow-2xl flex flex-col items-center w-full max-w-5xl p-0">
+      return (
+      <div className="min-h-screen bg-gradient-to-br from-slate-900 via-blue-900 to-black flex flex-col items-center justify-center py-12 px-4">
+        <div className="bg-slate-800/90 rounded-3xl shadow-2xl flex flex-col items-center w-full max-w-5xl p-0">
         {/* AI Note Taker Panel */}
         <div className="w-full flex flex-row justify-end items-center px-6 pt-6">
           <button
