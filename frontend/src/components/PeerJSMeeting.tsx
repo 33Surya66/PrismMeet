@@ -1,9 +1,34 @@
-import React, { useRef, useState, useEffect } from "react";
+import React, { useRef, useState, useEffect, useMemo } from "react";
 import { LogOut, XCircle, Settings, Mic, MicOff, Video as VideoIcon, VideoOff, Monitor } from 'lucide-react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { io } from 'socket.io-client';
 import { useUser } from '@/context/UserContext';
 import { Peer } from 'peerjs';
+
+interface User {
+  id?: string;
+  name?: string;
+  email?: string;
+  peerId?: string;
+}
+
+interface ChatMessage {
+  user: string;
+  text: string;
+  timestamp: string;
+}
+
+interface RemoteParticipant {
+  stream: MediaStream;
+  user: User;
+  camOn: boolean;
+  micOn: boolean;
+}
+
+interface RemoteScreenShare {
+  stream: MediaStream;
+  user: User;
+}
 
 const PeerJSMeeting: React.FC = () => {
   const localVideoRef = useRef<HTMLVideoElement>(null);
@@ -88,7 +113,7 @@ const PeerJSMeeting: React.FC = () => {
       console.log('🔗 Incoming connection from:', conn.peer);
       connectionsRef.current[conn.peer] = conn;
       
-      conn.on('data', (data) => {
+      conn.on('data', (data: any) => {
         console.log('📨 Received data:', data);
         if (data.type === 'user-info') {
           setRemoteParticipants(prev => ({
