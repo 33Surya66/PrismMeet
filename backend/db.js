@@ -95,27 +95,37 @@ db.serialize(() => {
   db.run(meetingIdeasTable);
   
   // Migration: Add name column to existing users table if it doesn't exist
-  db.run("PRAGMA table_info(users)", (err, rows) => {
-    if (!err) {
-      const hasNameColumn = rows.some(row => row.name === 'name');
-      if (!hasNameColumn) {
-        console.log('Adding name column to users table...');
-        db.run("ALTER TABLE users ADD COLUMN name TEXT", (err) => {
-          if (err) {
-            console.error('Error adding name column:', err);
-          } else {
-            console.log('Successfully added name column to users table');
-            // Update existing users to use email as name
-            db.run("UPDATE users SET name = email WHERE name IS NULL", (err) => {
-              if (err) {
-                console.error('Error updating existing users:', err);
-              } else {
-                console.log('Updated existing users with email as name');
-              }
-            });
-          }
-        });
-      }
+  db.all("PRAGMA table_info(users)", (err, rows) => {
+    if (err) {
+      console.error('Error checking table schema:', err);
+      return;
+    }
+    
+    if (!rows || !Array.isArray(rows)) {
+      console.log('No table info returned, skipping migration');
+      return;
+    }
+    
+    const hasNameColumn = rows.some(row => row.name === 'name');
+    if (!hasNameColumn) {
+      console.log('Adding name column to users table...');
+      db.run("ALTER TABLE users ADD COLUMN name TEXT", (err) => {
+        if (err) {
+          console.error('Error adding name column:', err);
+        } else {
+          console.log('Successfully added name column to users table');
+          // Update existing users to use email as name
+          db.run("UPDATE users SET name = email WHERE name IS NULL", (err) => {
+            if (err) {
+              console.error('Error updating existing users:', err);
+            } else {
+              console.log('Updated existing users with email as name');
+            }
+          });
+        }
+      });
+    } else {
+      console.log('Name column already exists in users table');
     }
   });
 });
