@@ -2,19 +2,12 @@ import { useState } from 'react';
 import { Menu, X, Video, Users, Shield, Zap } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { Avatar, AvatarFallback } from './ui/avatar';
+import { useUser } from '@/context/UserContext';
 
 const Header = () => {
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const navigate = useNavigate();
-
-  let user: any = {};
-  try {
-    const userStr = localStorage.getItem('user');
-    user = userStr ? JSON.parse(userStr) : {};
-  } catch (e) {
-    user = {};
-  }
-  const isLoggedIn = !!localStorage.getItem('token');
+  const { user, isLoggedIn, clearUser } = useUser();
 
   const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:4000';
 
@@ -26,7 +19,7 @@ const Header = () => {
   }
 
   const handleStartMeeting = async () => {
-    if (!user.name && !user.email) {
+    if (!isLoggedIn || !user?.email) {
       alert('You must be logged in to start a meeting.');
       return;
     }
@@ -40,6 +33,11 @@ const Header = () => {
     if (data.id) {
       navigate(`/meeting/${data.id}`);
     }
+  };
+
+  const handleLogout = () => {
+    clearUser();
+    navigate('/');
   };
 
   return (
@@ -100,15 +98,15 @@ const Header = () => {
               </>
             ) : (
               <>
-                <Avatar>
-                  <AvatarFallback>{getInitials(user.name || user.email)}</AvatarFallback>
-                </Avatar>
+                <div className="flex items-center space-x-2">
+                  <span className="text-white text-sm">{user.name || user.email}</span>
+                  <Avatar>
+                    <AvatarFallback>{getInitials(user.name || user.email)}</AvatarFallback>
+                  </Avatar>
+                </div>
                 <button
                   className="ml-2 px-4 py-2 bg-red-500 text-white rounded-lg font-semibold hover:bg-red-600 transition-colors"
-                  onClick={() => {
-                    localStorage.clear();
-                    window.location.href = '/';
-                  }}
+                  onClick={handleLogout}
                 >
                   Logout
                 </button>
@@ -154,17 +152,15 @@ const Header = () => {
               </>
             ) : (
               <>
-                <div className="flex justify-center mt-2">
+                <div className="flex flex-col items-center mt-2 space-y-2">
+                  <span className="text-white text-sm">{user.name || user.email}</span>
                   <Avatar>
                     <AvatarFallback>{getInitials(user.name || user.email)}</AvatarFallback>
                   </Avatar>
                 </div>
                 <button
                   className="w-full px-5 py-2 bg-red-500 text-white rounded-lg font-semibold hover:bg-red-600 transition-colors"
-                  onClick={() => {
-                    localStorage.clear();
-                    window.location.href = '/';
-                  }}
+                  onClick={handleLogout}
                 >
                   Logout
                 </button>
