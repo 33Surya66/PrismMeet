@@ -24,13 +24,16 @@ export const UserProvider = ({ children }: { children: React.ReactNode }) => {
     try {
       const userStr = localStorage.getItem('user');
       const token = localStorage.getItem('token');
-      if (userStr && token) {
+      if (userStr && userStr.trim() !== '' && token) {
         const userData = JSON.parse(userStr);
         console.log('Loading user from localStorage:', userData);
         setUserState(userData);
       }
     } catch (error) {
       console.error('Error loading user from localStorage:', error);
+      // Clear invalid data from localStorage
+      localStorage.removeItem('user');
+      localStorage.removeItem('token');
     }
   }, []);
 
@@ -39,7 +42,7 @@ export const UserProvider = ({ children }: { children: React.ReactNode }) => {
     const handleStorageChange = (e: StorageEvent) => {
       if (e.key === 'user') {
         try {
-          if (e.newValue) {
+          if (e.newValue && e.newValue.trim() !== '') {
             const userData = JSON.parse(e.newValue);
             console.log('User data updated from storage:', userData);
             setUserState(userData);
@@ -48,6 +51,10 @@ export const UserProvider = ({ children }: { children: React.ReactNode }) => {
           }
         } catch (error) {
           console.error('Error parsing user data from storage:', error);
+          // Clear invalid data from localStorage
+          localStorage.removeItem('user');
+          localStorage.removeItem('token');
+          setUserState({});
         }
       }
     };
