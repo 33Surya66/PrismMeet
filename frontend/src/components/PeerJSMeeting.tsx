@@ -30,6 +30,30 @@ interface RemoteScreenShare {
   user: User;
 }
 
+// Remote Video Component with proper stream handling
+const RemoteVideo: React.FC<{ stream: MediaStream; peerId: string }> = ({ stream, peerId }) => {
+  const videoRef = useRef<HTMLVideoElement>(null);
+  
+  useEffect(() => {
+    if (videoRef.current && stream) {
+      videoRef.current.srcObject = stream;
+      console.log('📹 Set video srcObject for peer:', peerId);
+    }
+  }, [stream, peerId]);
+  
+  return (
+    <video
+      ref={videoRef}
+      autoPlay
+      playsInline
+      className="w-72 h-56 rounded-2xl bg-slate-900 object-cover border-2 border-blue-400 shadow-lg"
+      onLoadedMetadata={() => console.log('📹 Video metadata loaded for peer:', peerId)}
+      onCanPlay={() => console.log('📹 Video can play for peer:', peerId)}
+      onError={e => console.error('❌ Video error for peer:', peerId, e)}
+    />
+  );
+};
+
 const PeerJSMeeting: React.FC = () => {
   const localVideoRef = useRef<HTMLVideoElement>(null);
   const screenVideoRef = useRef<HTMLVideoElement>(null);
@@ -59,6 +83,20 @@ const PeerJSMeeting: React.FC = () => {
   const [connectionRetries, setConnectionRetries] = useState(0);
   const [maxRetries] = useState(3);
   const [pendingPeerCalls, setPendingPeerCalls] = useState<{ peerId: string; user: any }[]>([]);
+  
+  // Debugging function to help diagnose connection issues
+  const debugConnectionState = useCallback(() => {
+    console.log('🔍 Debug Connection State:', {
+      peerRef: !!peerRef.current,
+      peerOpen: peerRef.current?.open,
+      peerConnected,
+      localStream: !!localStream,
+      localStreamTracks: localStream?.getTracks().length || 0,
+      remoteParticipants: Object.keys(remoteParticipants).length,
+      pendingCalls: pendingPeerCalls.length,
+      connections: Object.keys(connectionsRef.current).length
+    });
+  }, [peerConnected, localStream, remoteParticipants, pendingPeerCalls]);
   
   const { user, isLoggedIn } = useUser();
   const { id: meetingIdParam } = useParams();
@@ -172,28 +210,17 @@ const PeerJSMeeting: React.FC = () => {
   
   // Generate unique peer ID for this user
   const peerId = useMemo(() => {
-    // Create a valid peer ID with only alphanumeric characters and hyphens
     const email = user?.email || 'anonymous';
     const timestamp = Date.now();
-    const random = Math.random().toString(36).substr(2, 9);
+    const random = Math.random().toString(36).substr(2, 6);
     
-    // Clean the email to remove special characters that might cause issues
-    // Only keep letters, numbers, and hyphens, replace @ and . with hyphens
+    // Simpler, more reliable peer ID
     const cleanEmail = email
-      .replace(/[^a-zA-Z0-9]/g, '') // Remove all special characters
-      .toLowerCase(); // Convert to lowercase for consistency
+      .toLowerCase()
+      .replace(/[^a-zA-Z0-9]/g, '')
+      .substring(0, 20);
     
-    // Ensure the peer ID is not too long (PeerJS has limits)
-    const maxLength = 50;
-    const baseId = `${cleanEmail}-${timestamp}-${random}`;
-    
-    if (baseId.length > maxLength) {
-      // Truncate if too long, but keep the timestamp and random part
-      const truncatedEmail = cleanEmail.substring(0, maxLength - 20); // Leave room for timestamp and random
-      return `${truncatedEmail}-${timestamp}-${random}`;
-    }
-    
-    return baseId;
+    return `${cleanEmail}-${timestamp}-${random}`;
   }, [user?.email]);
 
   // Update participant count and peer IDs
@@ -263,9 +290,19 @@ const PeerJSMeeting: React.FC = () => {
     // Handle peer connection events
     peer.on('open', (id) => {
       console.log('🔗 PeerJS connected with ID:', id);
-      console.log('📊 Connection state updated:', { peerConnected: true, connectionStatus: 'connected' });
       setPeerConnected(true);
       setConnectionStatus('connected');
+      
+      // Process pending calls after connection is established
+      setTimeout(() => {
+        if (pendingPeerCalls.length > 0 && localStream) {
+          console.log('📞 Processing pending calls after connection:', pendingPeerCalls.length);
+          pendingPeerCalls.forEach(({ peerId, user }) => {
+            callPeer(peerId, user);
+          });
+          setPendingPeerCalls([]);
+        }
+      }, 1000);
     });
 
     peer.on('error', (err) => {
@@ -315,43 +352,52 @@ const PeerJSMeeting: React.FC = () => {
     peer.on('call', (call) => {
       console.log('📞 Incoming call from:', call.peer);
       
-      if (localStream) {
-        console.log('📹 Answering call with local stream');
-        call.answer(localStream);
-        
-        call.on('stream', (remoteStream) => {
-          console.log('📹 Received remote stream from:', call.peer);
-          setRemoteParticipants(prev => {
-            const updated = {
-              ...prev,
-              [call.peer]: {
-                stream: remoteStream,
-                user: { name: 'Remote User', email: call.peer },
-                camOn: true,
-                micOn: true
-              }
-            };
-            console.log('📊 Updated remote participants (incoming):', Object.keys(updated));
-            return updated;
-          });
-        });
-
-        call.on('close', () => {
-          console.log('📞 Call closed with:', call.peer);
-          setRemoteParticipants(prev => {
-            const copy = { ...prev };
-            delete copy[call.peer];
-            return copy;
-          });
-        });
-
-        call.on('error', (err) => {
-          console.error('❌ Call error:', err);
-        });
-      } else {
-        console.log('⚠️ No local stream available, rejecting call');
+      if (!localStream) {
+        console.log('⚠️ No local stream, rejecting call');
         call.close();
+        return;
       }
+      
+      // Validate local stream has tracks
+      const tracks = localStream.getTracks();
+      if (tracks.length === 0) {
+        console.log('⚠️ Local stream has no tracks, rejecting call');
+        call.close();
+        return;
+      }
+      
+      console.log('📹 Answering call with local stream');
+      call.answer(localStream);
+      
+      call.on('stream', (remoteStream) => {
+        console.log('📹 Received remote stream from incoming call:', {
+          peerId: call.peer,
+          tracks: remoteStream.getTracks().length
+        });
+        
+        setRemoteParticipants(prev => ({
+          ...prev,
+          [call.peer]: {
+            stream: remoteStream,
+            user: { name: 'Remote User', email: call.peer },
+            camOn: true,
+            micOn: true
+          }
+        }));
+      });
+      
+      call.on('close', () => {
+        console.log('📞 Incoming call closed:', call.peer);
+        setRemoteParticipants(prev => {
+          const copy = { ...prev };
+          delete copy[call.peer];
+          return copy;
+        });
+      });
+      
+      call.on('error', (err) => {
+        console.error('❌ Incoming call error:', err);
+      });
     });
 
     // Handle data connections
@@ -512,63 +558,58 @@ const PeerJSMeeting: React.FC = () => {
   // Call a peer
   const callPeer = (remotePeerId: string, remoteUser: any) => {
     console.log('📞 Attempting to call peer:', remotePeerId);
-    console.log('📊 Current state:', {
-      peerRef: !!peerRef.current,
-      localStream: !!localStream,
-      peerConnected,
-      remotePeerId,
-      remoteUser
-    });
     
-    // Validate all requirements
-    if (!peerRef.current) {
-      console.log('⚠️ Cannot call peer - PeerJS instance not available');
+    // Validate requirements
+    if (!peerRef.current || !peerRef.current.open) {
+      console.log('⚠️ PeerJS not ready, adding to pending calls');
+      setPendingPeerCalls(prev => [...prev, { peerId: remotePeerId, user: remoteUser }]);
       return;
     }
     
     if (!localStream) {
-      console.log('⚠️ Cannot call peer - Local stream not available');
+      console.log('⚠️ No local stream available');
       return;
     }
     
-    if (!peerConnected) {
-      console.log('⚠️ Cannot call peer - PeerJS not connected');
+    // Validate local stream has tracks
+    const videoTracks = localStream.getVideoTracks();
+    const audioTracks = localStream.getAudioTracks();
+    
+    if (videoTracks.length === 0 && audioTracks.length === 0) {
+      console.log('⚠️ Local stream has no tracks');
       return;
     }
     
-    if (!remotePeerId || typeof remotePeerId !== 'string') {
-      console.log('⚠️ Cannot call peer - Invalid remote peer ID:', remotePeerId);
-      return;
-    }
-    
-    if (remotePeerId === peerId) {
-      console.log('⚠️ Cannot call peer - Attempting to call self');
-      return;
-    }
-    
-    console.log('📞 Calling peer:', remotePeerId, 'from', peerId);
+    console.log('📞 Calling peer with tracks:', {
+      video: videoTracks.length,
+      audio: audioTracks.length,
+      remotePeerId
+    });
     
     try {
       const call = peerRef.current.call(remotePeerId, localStream);
       
+      // Set up call event handlers
       call.on('stream', (remoteStream) => {
-        console.log('📹 Received remote stream from:', remotePeerId, remoteStream);
-        setRemoteParticipants(prev => {
-          const updated = {
-            ...prev,
-            [remotePeerId]: {
-              ...prev[remotePeerId],
-              stream: remoteStream,
-              user: remoteUser,
-              camOn: true,
-              micOn: true
-            }
-          };
-          console.log('📊 Updated remote participants:', Object.keys(updated));
-          return updated;
+        console.log('📹 Received remote stream:', {
+          peerId: remotePeerId,
+          tracks: remoteStream.getTracks().length,
+          videoTracks: remoteStream.getVideoTracks().length,
+          audioTracks: remoteStream.getAudioTracks().length
         });
+        
+        setRemoteParticipants(prev => ({
+          ...prev,
+          [remotePeerId]: {
+            ...prev[remotePeerId],
+            stream: remoteStream,
+            user: remoteUser,
+            camOn: true,
+            micOn: true
+          }
+        }));
       });
-
+      
       call.on('close', () => {
         console.log('📞 Call closed with:', remotePeerId);
         setRemoteParticipants(prev => {
@@ -577,59 +618,87 @@ const PeerJSMeeting: React.FC = () => {
           return copy;
         });
       });
-
+      
       call.on('error', (err) => {
-        console.error('❌ Call error with:', remotePeerId, err);
+        console.error('❌ Call error:', err);
         setRemoteParticipants(prev => {
           const copy = { ...prev };
           delete copy[remotePeerId];
           return copy;
         });
       });
-
-      // Send user info via data connection
-      try {
-        const conn = peerRef.current.connect(remotePeerId);
-        connectionsRef.current[remotePeerId] = conn;
-        
-        conn.on('open', () => {
-          console.log('🔗 Data connection opened with:', remotePeerId);
-          conn.send({
-            type: 'user-info',
-            user: { 
-              name: user.name || user.email || 'Anonymous',
-              email: user.email 
-            }
-          });
-          conn.send({ type: 'mic-toggle', micOn });
-          conn.send({ type: 'cam-toggle', camOn });
+      
+      // Create data connection
+      const conn = peerRef.current.connect(remotePeerId);
+      connectionsRef.current[remotePeerId] = conn;
+      
+      conn.on('open', () => {
+        console.log('🔗 Data connection opened with:', remotePeerId);
+        conn.send({
+          type: 'user-info',
+          user: { 
+            name: user.name || user.email || 'Anonymous',
+            email: user.email 
+          }
         });
-
-        conn.on('close', () => {
-          console.log('🔗 Data connection closed with:', remotePeerId);
-          delete connectionsRef.current[remotePeerId];
-        });
-
-        conn.on('error', (err) => {
-          console.error('❌ Data connection error with:', remotePeerId, err);
-          delete connectionsRef.current[remotePeerId];
-        });
-      } catch (connErr) {
-        console.error('❌ Failed to create data connection with:', remotePeerId, connErr);
-      }
-    } catch (callErr) {
-      console.error('❌ Failed to call peer:', remotePeerId, callErr);
+        conn.send({ type: 'mic-toggle', micOn });
+        conn.send({ type: 'cam-toggle', camOn });
+      });
+      
+      conn.on('close', () => {
+        console.log('🔗 Data connection closed with:', remotePeerId);
+        delete connectionsRef.current[remotePeerId];
+      });
+      
+      conn.on('error', (err) => {
+        console.error('❌ Data connection error with:', remotePeerId, err);
+        delete connectionsRef.current[remotePeerId];
+      });
+      
+    } catch (error) {
+      console.error('❌ Failed to call peer:', error);
     }
   };
 
   // Start meeting
   const startMeeting = async () => {
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+      console.log('🎬 Starting meeting...');
+      
+      const stream = await navigator.mediaDevices.getUserMedia({ 
+        video: { 
+          width: { ideal: 1280 },
+          height: { ideal: 720 },
+          frameRate: { ideal: 30 }
+        }, 
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true
+        }
+      });
+      
+      console.log('📹 Got local stream:', {
+        videoTracks: stream.getVideoTracks().length,
+        audioTracks: stream.getAudioTracks().length
+      });
+      
       setLocalStream(stream);
       setStarted(true);
-      console.log('🎥 Meeting started with local stream');
+      
+      // If there are pending peer calls, process them after a short delay
+      if (pendingPeerCalls.length > 0) {
+        console.log('📞 Processing pending peer calls:', pendingPeerCalls.length);
+        setTimeout(() => {
+          pendingPeerCalls.forEach(({ peerId, user }) => {
+            callPeer(peerId, user);
+          });
+          setPendingPeerCalls([]);
+        }, 1000);
+      }
+      
     } catch (err) {
+      console.error('❌ Failed to start meeting:', err);
       alert("Could not access camera/mic: " + (err && err.message ? err.message : err));
     }
   };
@@ -870,20 +939,7 @@ const PeerJSMeeting: React.FC = () => {
               <div key={peerId} className="flex flex-col items-center w-72 h-80">
                 <span className="text-white text-lg font-semibold mb-2">{remoteUser?.name || remoteUser?.email || 'Participant'}</span>
                 {stream && camOn !== false ? (
-                  <video
-                    autoPlay
-                    playsInline
-                    className="w-72 h-56 rounded-2xl bg-slate-900 object-cover border-2 border-blue-400 shadow-lg"
-                    ref={el => {
-                      if (el && stream) {
-                        el.srcObject = stream;
-                        console.log('Set video srcObject for peer:', peerId, stream);
-                      }
-                    }}
-                    onLoadedMetadata={() => console.log('📹 Video metadata loaded for peer:', peerId)}
-                    onCanPlay={() => console.log('📹 Video can play for peer:', peerId)}
-                    onError={e => console.error('❌ Video error for peer:', peerId, e)}
-                  />
+                  <RemoteVideo stream={stream} peerId={peerId} />
                 ) : (
                   <div className="w-72 h-56 rounded-2xl bg-slate-900 flex items-center justify-center border-2 border-blue-400 shadow-lg">
                     <span className="text-slate-400 text-center">No video stream received</span>
@@ -946,6 +1002,14 @@ const PeerJSMeeting: React.FC = () => {
             className={`group p-3 rounded-full transition-colors ${screenSharing ? 'bg-amber-400 text-slate-900' : 'bg-slate-700 hover:bg-slate-600 text-white'} disabled:opacity-60`}
           >
             <Monitor className="w-6 h-6" />
+          </button>
+          
+          <button 
+            onClick={debugConnectionState}
+            className="p-3 rounded-full bg-slate-700 hover:bg-slate-600 text-white transition-colors"
+            title="Debug Connection State"
+          >
+            <Settings className="w-6 h-6" />
           </button>
           
           <button onClick={() => navigate('/')} className="p-3 rounded-full bg-slate-700 hover:bg-red-500 text-white transition-colors">
