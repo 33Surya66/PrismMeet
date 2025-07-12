@@ -4,6 +4,8 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { io } from 'socket.io-client';
 import { useUser } from '@/context/UserContext';
 import { Peer } from 'peerjs';
+// @ts-ignore
+const DOMPurify = require('dompurify');
 
 interface User {
   id?: string;
@@ -36,8 +38,52 @@ const RemoteVideo: React.FC<{ stream: MediaStream; peerId: string }> = ({ stream
   
   useEffect(() => {
     if (videoRef.current && stream) {
+      // Ensure the video element is properly set up
       videoRef.current.srcObject = stream;
-      console.log('📹 Set video srcObject for peer:', peerId);
+      
+      // Add event listeners for debugging
+      const video = videoRef.current;
+      
+      const handleLoadedMetadata = () => {
+        console.log('📹 Video metadata loaded for peer:', peerId, {
+          videoWidth: video.videoWidth,
+          videoHeight: video.videoHeight,
+          readyState: video.readyState
+        });
+      };
+      
+      const handleCanPlay = () => {
+        console.log('📹 Video can play for peer:', peerId);
+        // Force play to ensure video starts
+        video.play().catch(err => {
+          console.warn('⚠️ Auto-play failed for peer:', peerId, err);
+        });
+      };
+      
+      const handleError = (e: Event) => {
+        console.error('❌ Video error for peer:', peerId, e);
+      };
+      
+      const handleStalled = () => {
+        console.warn('⚠️ Video stalled for peer:', peerId);
+      };
+      
+      video.addEventListener('loadedmetadata', handleLoadedMetadata);
+      video.addEventListener('canplay', handleCanPlay);
+      video.addEventListener('error', handleError);
+      video.addEventListener('stalled', handleStalled);
+      
+      // Try to play immediately
+      video.play().catch(err => {
+        console.warn('⚠️ Initial play failed for peer:', peerId, err);
+      });
+      
+      return () => {
+        video.removeEventListener('loadedmetadata', handleLoadedMetadata);
+        video.removeEventListener('canplay', handleCanPlay);
+        video.removeEventListener('error', handleError);
+        video.removeEventListener('stalled', handleStalled);
+      };
     }
   }, [stream, peerId]);
   
@@ -46,10 +92,9 @@ const RemoteVideo: React.FC<{ stream: MediaStream; peerId: string }> = ({ stream
       ref={videoRef}
       autoPlay
       playsInline
+      muted={false}
       className="w-72 h-56 rounded-2xl bg-slate-900 object-cover border-2 border-blue-400 shadow-lg"
-      onLoadedMetadata={() => console.log('📹 Video metadata loaded for peer:', peerId)}
-      onCanPlay={() => console.log('📹 Video can play for peer:', peerId)}
-      onError={e => console.error('❌ Video error for peer:', peerId, e)}
+      style={{ minHeight: '224px' }}
     />
   );
 };
@@ -265,13 +310,12 @@ const PeerJSMeeting: React.FC = () => {
       return;
     }
 
-    // Initialize PeerJS with better configuration
+    // Initialize PeerJS with robust configuration
     const peer = new Peer(peerId, {
-      // Use a more reliable PeerJS server
-      host: '0.peerjs.com', // More reliable than Heroku server
+      host: '0.peerjs.com',
       port: 443,
       secure: true,
-      debug: 3, // Enable debug logging
+      debug: 3,
       config: {
         iceServers: [
           { urls: 'stun:stun.l.google.com:19302' },
@@ -279,17 +323,32 @@ const PeerJSMeeting: React.FC = () => {
           { urls: 'stun:stun2.l.google.com:19302' },
           { urls: 'stun:stun3.l.google.com:19302' },
           { urls: 'stun:stun4.l.google.com:19302' },
-          // Add free TURN server
           { urls: 'turn:openrelay.metered.ca:80', username: 'openrelayproject', credential: 'openrelayproject' },
           { urls: 'turn:openrelay.metered.ca:443', username: 'openrelayproject', credential: 'openrelayproject' },
-          { urls: 'turn:openrelay.metered.ca:443?transport=tcp', username: 'openrelayproject', credential: 'openrelayproject' }
+          { urls: 'turn:openrelay.metered.ca:443?transport=tcp', username: 'openrelayproject', credential: 'openrelayproject' },
+          // Add more TURN servers here for production
         ]
       }
     });
 
     peerRef.current = peer;
 
-    peerRef.current = peer;
+    // ICE candidate and connection state logging for debugging and fallback
+    peer.on('open', (id) => {
+      console.log('PeerJS connection open:', id);
+    });
+    peer.on('disconnected', () => {
+      console.log('PeerJS disconnected');
+    });
+    peer.on('close', () => {
+      console.log('PeerJS connection closed');
+    });
+    peer.on('error', (err) => {
+      console.error('PeerJS error:', err);
+    });
+    peer.on('connection', (conn) => {
+      console.log('PeerJS data connection established:', conn.peer);
+    });
 
     // Handle peer connection events
     peer.on('open', (id) => {
@@ -669,23 +728,39 @@ const PeerJSMeeting: React.FC = () => {
     try {
       console.log('🎬 Starting meeting...');
       
+      // First check if we have permission
+      const permissions = await navigator.permissions.query({ name: 'camera' as PermissionName });
+      if (permissions.state === 'denied') {
+        alert('Camera permission is required. Please enable camera access in your browser settings.');
+        return;
+      }
+      
       const stream = await navigator.mediaDevices.getUserMedia({ 
         video: { 
-          width: { ideal: 1280 },
-          height: { ideal: 720 },
-          frameRate: { ideal: 30 }
+          width: { ideal: 1280, min: 640 },
+          height: { ideal: 720, min: 480 },
+          frameRate: { ideal: 30, min: 15 },
+          facingMode: 'user'
         }, 
         audio: {
           echoCancellation: true,
           noiseSuppression: true,
-          autoGainControl: true
+          autoGainControl: true,
+          sampleRate: { ideal: 48000 }
         }
       });
       
       console.log('📹 Got local stream:', {
         videoTracks: stream.getVideoTracks().length,
-        audioTracks: stream.getAudioTracks().length
+        audioTracks: stream.getAudioTracks().length,
+        videoTrackSettings: stream.getVideoTracks()[0]?.getSettings(),
+        audioTrackSettings: stream.getAudioTracks()[0]?.getSettings()
       });
+      
+      // Verify stream has tracks
+      if (stream.getTracks().length === 0) {
+        throw new Error('No media tracks available');
+      }
       
       setLocalStream(stream);
       setStarted(true);
@@ -703,7 +778,21 @@ const PeerJSMeeting: React.FC = () => {
       
     } catch (err) {
       console.error('❌ Failed to start meeting:', err);
-      alert("Could not access camera/mic: " + (err && err.message ? err.message : err));
+      let errorMessage = 'Could not access camera/mic';
+      
+      if (err instanceof Error) {
+        if (err.name === 'NotAllowedError') {
+          errorMessage = 'Camera/microphone access denied. Please allow camera and microphone permissions.';
+        } else if (err.name === 'NotFoundError') {
+          errorMessage = 'No camera or microphone found. Please check your devices.';
+        } else if (err.name === 'NotReadableError') {
+          errorMessage = 'Camera or microphone is already in use by another application.';
+        } else {
+          errorMessage = err.message;
+        }
+      }
+      
+      alert(errorMessage);
     }
   };
 
@@ -796,7 +885,27 @@ const PeerJSMeeting: React.FC = () => {
   // Update local video when stream changes
   useEffect(() => {
     if (localVideoRef.current && localStream) {
-      localVideoRef.current.srcObject = localStream;
+      const video = localVideoRef.current;
+      video.srcObject = localStream;
+      
+      // Ensure local video plays properly
+      const handleCanPlay = () => {
+        console.log('📹 Local video can play');
+        video.play().catch(err => {
+          console.warn('⚠️ Local video auto-play failed:', err);
+        });
+      };
+      
+      video.addEventListener('canplay', handleCanPlay);
+      
+      // Try to play immediately
+      video.play().catch(err => {
+        console.warn('⚠️ Initial local video play failed:', err);
+      });
+      
+      return () => {
+        video.removeEventListener('canplay', handleCanPlay);
+      };
     }
   }, [localStream]);
 
@@ -909,28 +1018,109 @@ const PeerJSMeeting: React.FC = () => {
               <div>
                 <span className="text-slate-300">Local Stream: </span>
                 <span className={localStream ? 'text-green-400' : 'text-red-400'}>
-                  {localStream ? 'Active' : 'Inactive'}
+                  {localStream ? `Active (${localStream.getTracks().length} tracks)` : 'Inactive'}
                 </span>
               </div>
               <div>
                 <span className="text-slate-300">Pending Calls: </span>
                 <span className="text-slate-200">{pendingPeerCalls.length}</span>
               </div>
+              <div>
+                <span className="text-slate-300">Meeting Started: </span>
+                <span className={started ? 'text-green-400' : 'text-red-400'}>
+                  {started ? 'Yes' : 'No'}
+                </span>
+              </div>
+              <div>
+                <span className="text-slate-300">Camera On: </span>
+                <span className={camOn ? 'text-green-400' : 'text-red-400'}>
+                  {camOn ? 'Yes' : 'No'}
+                </span>
+              </div>
+              <div>
+                <span className="text-slate-300">Mic On: </span>
+                <span className={micOn ? 'text-green-400' : 'text-red-400'}>
+                  {micOn ? 'Yes' : 'No'}
+                </span>
+              </div>
             </div>
+            {localStream && (
+              <div className="mt-2 text-xs">
+                <div className="text-slate-300 mb-1">Local Stream Details:</div>
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <span className="text-slate-400">Video Tracks: </span>
+                    <span className="text-slate-200">{localStream.getVideoTracks().length}</span>
+                  </div>
+                  <div>
+                    <span className="text-slate-400">Audio Tracks: </span>
+                    <span className="text-slate-200">{localStream.getAudioTracks().length}</span>
+                  </div>
+                  <div>
+                    <span className="text-slate-400">Video Enabled: </span>
+                    <span className={localStream.getVideoTracks()[0]?.enabled ? 'text-green-400' : 'text-red-400'}>
+                      {localStream.getVideoTracks()[0]?.enabled ? 'Yes' : 'No'}
+                    </span>
+                  </div>
+                  <div>
+                    <span className="text-slate-400">Audio Enabled: </span>
+                    <span className={localStream.getAudioTracks()[0]?.enabled ? 'text-green-400' : 'text-red-400'}>
+                      {localStream.getAudioTracks()[0]?.enabled ? 'Yes' : 'No'}
+                    </span>
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         </div>
 
         {/* Video Grid */}
         <div className="w-full flex flex-col items-center justify-center p-6 pb-0">
+          {/* Troubleshooting Info */}
+          {!started && (
+            <div className="w-full max-w-2xl bg-blue-500/20 border border-blue-500 text-blue-200 p-4 rounded-lg mb-6">
+              <h3 className="font-semibold mb-2">📹 Video Troubleshooting Tips:</h3>
+              <ul className="text-sm space-y-1">
+                <li>• Make sure your browser has camera and microphone permissions</li>
+                <li>• Try refreshing the page if video doesn't appear</li>
+                <li>• Check that no other apps are using your camera</li>
+                <li>• Use the "Test Video" button to diagnose device issues</li>
+                <li>• Ensure you're using HTTPS (required for camera access)</li>
+              </ul>
+            </div>
+          )}
+          
           <div className="w-full flex flex-wrap gap-4 justify-center items-center">
             {/* Local video */}
             <div className="flex flex-col items-center w-72 h-80">
               <span className="text-white text-lg font-semibold mb-2">Camera (You)</span>
-              {camOn ? (
-                <video ref={localVideoRef} autoPlay playsInline muted className="w-72 h-56 rounded-2xl bg-slate-900 object-cover border-2 border-slate-400 shadow-lg" />
+              {started && localStream && camOn ? (
+                <video 
+                  ref={localVideoRef} 
+                  autoPlay 
+                  playsInline 
+                  muted 
+                  className="w-72 h-56 rounded-2xl bg-slate-900 object-cover border-2 border-slate-400 shadow-lg"
+                  style={{ minHeight: '224px' }}
+                />
               ) : (
                 <div className="w-72 h-56 rounded-2xl bg-slate-900 flex items-center justify-center border-2 border-slate-400 shadow-lg">
-                  <img src="/logo.png" alt="Camera Off" className="w-24 h-24 opacity-60" />
+                  {!started ? (
+                    <div className="text-center">
+                      <img src="/logo.png" alt="Start Meeting" className="w-24 h-24 opacity-60 mx-auto mb-2" />
+                      <p className="text-slate-400 text-sm">Click "Start Meeting" to begin</p>
+                    </div>
+                  ) : !localStream ? (
+                    <div className="text-center">
+                      <img src="/logo.png" alt="No Stream" className="w-24 h-24 opacity-60 mx-auto mb-2" />
+                      <p className="text-slate-400 text-sm">No video stream available</p>
+                    </div>
+                  ) : (
+                    <div className="text-center">
+                      <img src="/logo.png" alt="Camera Off" className="w-24 h-24 opacity-60 mx-auto mb-2" />
+                      <p className="text-slate-400 text-sm">Camera is turned off</p>
+                    </div>
+                  )}
                 </div>
               )}
               <span className="text-slate-300 mt-2 text-base font-semibold">{user.name || user.email || 'You'}</span>
@@ -942,11 +1132,18 @@ const PeerJSMeeting: React.FC = () => {
             {Object.entries(remoteParticipants).map(([peerId, { stream, user: remoteUser, camOn, micOn }]) => (
               <div key={peerId} className="flex flex-col items-center w-72 h-80">
                 <span className="text-white text-lg font-semibold mb-2">{remoteUser?.name || remoteUser?.email || 'Participant'}</span>
-                {stream && camOn !== false ? (
+                {stream && stream.getTracks().length > 0 && camOn !== false ? (
                   <RemoteVideo stream={stream} peerId={peerId} />
                 ) : (
                   <div className="w-72 h-56 rounded-2xl bg-slate-900 flex items-center justify-center border-2 border-blue-400 shadow-lg">
-                    <span className="text-slate-400 text-center">No video stream received</span>
+                    <div className="text-center">
+                      <img src="/logo.png" alt="No Video" className="w-16 h-16 opacity-60 mx-auto mb-2" />
+                      <p className="text-slate-400 text-sm">
+                        {!stream ? 'Connecting...' : 
+                         stream.getTracks().length === 0 ? 'No video tracks' : 
+                         camOn === false ? 'Camera off' : 'No video stream'}
+                      </p>
+                    </div>
                   </div>
                 )}
                 <span className="text-slate-300 mt-2 text-base font-semibold">{remoteUser?.name || remoteUser?.email || peerId}</span>
@@ -983,6 +1180,20 @@ const PeerJSMeeting: React.FC = () => {
           >
             {started ? "Meeting Started" : "Start Meeting"}
           </button>
+          {/* Jitsi Meet fallback button */}
+          <button
+            onClick={() => window.open('https://meet.jit.si/YourRoomName', '_blank')}
+            className="bg-blue-600 text-white px-4 py-2 rounded ml-2"
+          >
+            Fallback to Jitsi Meet
+          </button>
+          
+          <button
+            onClick={() => window.open('/video-test', '_blank')}
+            className="bg-green-600 text-white px-4 py-2 rounded ml-2"
+          >
+            Test Video
+          </button>
           
           <button
             onClick={toggleMic}
@@ -1014,6 +1225,29 @@ const PeerJSMeeting: React.FC = () => {
             title="Debug Connection State"
           >
             <Settings className="w-6 h-6" />
+          </button>
+          
+          <button 
+            onClick={async () => {
+              try {
+                console.log('🧪 Testing video devices...');
+                const devices = await navigator.mediaDevices.enumerateDevices();
+                const videoDevices = devices.filter(device => device.kind === 'videoinput');
+                const audioDevices = devices.filter(device => device.kind === 'audioinput');
+                
+                console.log('📹 Available video devices:', videoDevices);
+                console.log('🎤 Available audio devices:', audioDevices);
+                
+                alert(`Found ${videoDevices.length} video devices and ${audioDevices.length} audio devices. Check console for details.`);
+              } catch (err) {
+                console.error('❌ Error testing devices:', err);
+                alert('Error testing devices: ' + err);
+              }
+            }}
+            className="p-3 rounded-full bg-blue-600 hover:bg-blue-500 text-white transition-colors"
+            title="Test Video Devices"
+          >
+            <VideoIcon className="w-6 h-6" />
           </button>
           
           <button onClick={() => navigate('/')} className="p-3 rounded-full bg-slate-700 hover:bg-red-500 text-white transition-colors">
@@ -1093,7 +1327,7 @@ const PeerJSMeeting: React.FC = () => {
                           <div key={i} className={`flex ${isMe ? 'justify-end' : 'justify-start'}`}>
                             <div className={`max-w-[70%] px-4 py-2 rounded-lg ${isMe ? 'bg-blue-500 text-white' : 'bg-slate-700 text-white'}`}>
                               <div className="text-xs font-semibold text-blue-300 mb-1">{msg.user}</div>
-                              <div>{msg.text}</div>
+                              <div dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(msg.text) }} />
                             </div>
                           </div>
                         );
@@ -1140,7 +1374,7 @@ const PeerJSMeeting: React.FC = () => {
                         {ideas.map((idea, index) => (
                           <div key={index} className="bg-slate-700 rounded-lg p-3 border border-slate-600">
                             <div className="text-xs text-slate-400 mb-1">{idea.username}</div>
-                            <div className="text-white">{idea.idea}</div>
+                            <div dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(idea.idea) }} />
                             <div className="text-xs text-slate-500 mt-2">
                               {new Date(idea.created_at).toLocaleTimeString()}
                             </div>

@@ -8,6 +8,7 @@ import NotFound from "./pages/NotFound";
 import Meeting from "./pages/Meeting";
 import Login from "./pages/Login";
 import Register from "./pages/Register";
+import VideoTest from "./pages/VideoTest";
 import React from "react";
 import Header from "./components/Header";
 import { UserProvider } from './context/UserContext';
@@ -28,6 +29,7 @@ const App = () => (
             <Route path="/meeting" element={<Meeting />} />
             <Route path="/login" element={<Login />} />
             <Route path="/register" element={<Register />} />
+            <Route path="/video-test" element={<VideoTest />} />
             {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
             <Route path="*" element={<NotFound />} />
           </Routes>
