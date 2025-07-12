@@ -4,8 +4,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { io } from 'socket.io-client';
 import { useUser } from '@/context/UserContext';
 import { Peer } from 'peerjs';
-// @ts-ignore
-const DOMPurify = require('dompurify');
+import DOMPurify from 'dompurify';
 
 interface User {
   id?: string;
